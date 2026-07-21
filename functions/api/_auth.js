@@ -74,11 +74,35 @@ function readCookie(request, name) {
     }
     return null;
 }
+// 会话密钥解析（零配置）：env.SESSION_SECRET > 由站点密码派生 > 随机生成并持久化到 KV。
+// 这样只要绑了 KV，账号功能开箱即用，无需再配任何环境变量。
+let _cachedSecret = null;
+async function getSessionSecret(env, kv) {
+    if (env && env.SESSION_SECRET) return env.SESSION_SECRET;
+    if (env && (env.PASSWORD || env.ADMINPASSWORD)) {
+        // 与 server.mjs（Node 端）同一派生式，保持两端一致
+        return sha256Hex('lt|' + (env.PASSWORD || '') + '|' + (env.ADMINPASSWORD || ''));
+    }
+    if (_cachedSecret) return _cachedSecret;
+    kv = kv || getKV(env);
+    if (!kv) return null;
+    const KEY = '_cfg:session_secret';
+    let s = null;
+    try { s = await kv.get(KEY); } catch (e) {}
+    if (!s) {
+        s = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+        try { await kv.put(KEY, s); } catch (e) {}
+    }
+    _cachedSecret = s;
+    return s;
+}
+
 // 从请求里解析出 {userId} 或 null
 async function readSession(request, env) {
-    if (!env || !env.SESSION_SECRET) return null;
     const tok = readCookie(request, COOKIE);
-    return tok ? verifySession(tok, env.SESSION_SECRET) : null;
+    if (!tok) return null;
+    const secret = await getSessionSecret(env);
+    return secret ? verifySession(tok, secret) : null;
 }
 function buildSessionCookie(token, ttlMs, secure) {
     const maxAge = Math.floor((ttlMs || DEFAULT_TTL) / 1000);
@@ -154,6 +178,6 @@ function json(obj, status, extraHeaders) {
 export {
     COOKIE, DEFAULT_TTL,
     b64urlEncode, b64urlDecode, bytesToHex, hexToBytes, timingSafeEqual, sha256Hex,
-    issueSession, verifySession, readCookie, readSession, buildSessionCookie, clearSessionCookie,
+    issueSession, verifySession, readCookie, readSession, getSessionSecret, buildSessionCookie, clearSessionCookie,
     pbkdf2Hash, pbkdf2Verify, normalizeUser, getKV, resolveIdentity, isSecure, json,
 };

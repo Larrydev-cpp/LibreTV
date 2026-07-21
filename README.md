@@ -81,7 +81,7 @@ LibreTV 是一个轻量级、自托管的在线影视搜索与观看平台：聚
 把单一站点密码升级为**多用户账号系统**（全部跑在 Cloudflare Functions + KV 上）：
 - **注册 / 登录 / 登出**：右上角账号按钮 → 弹窗。会话用 HMAC-SHA256 签名 token（HttpOnly Cookie `lt_session`）。
 - **密码安全**：服务端用 **PBKDF2-HMAC-SHA256 + 每用户随机盐**存储，**绝不存明文**；登录通用报错防用户枚举。
-- **仅管理员可建账号**：注册需填**管理员密码（`ADMINPASSWORD`）当邀请口令**，防止陌生人乱注册占用存储（可用 `OPEN_REGISTRATION=true` 放开）。
+- **注册零门槛**：进了站（通过站点密码）即可直接注册，无需管理员密码；如需收紧可设 `REQUIRE_INVITE=true` 恢复「管理员密码当邀请口令」模式。
 - **按用户隔离**：历史 `history:<user>`、收藏 `favorites:<user>`、设置 `settings:<user>` 各自独立。
 - **优雅降级**：未配置 / 未登录时完全维持原有本地体验，旧的「用户名 + 站点密码」同步也仍兼容。
 
@@ -123,14 +123,13 @@ LibreTV 是一个轻量级、自托管的在线影视搜索与观看平台：聚
 > 仅 **Cloudflare Pages** 部署支持完整私有云功能（账号 + 云同步 + 媒体库），因为它用到 Workers KV 与 R2。
 
 ### A. 开启「多用户账号 + 历史/收藏/设置云同步」
-在 Pages 项目 → **Settings**：
-1. **环境变量** `SESSION_SECRET`：一段长随机串（会话签名密钥，**必填**）。
-2. **KV 绑定**：Workers & Pages → KV 新建一个命名空间，然后在 **Settings → Bindings** 把它绑为变量名 **`LIBRETV_KV`**（或复用代理缓存用的 `LIBRETV_PROXY_KV`）。
-3. **环境变量** `ADMINPASSWORD`：管理员密码，同时作为**注册邀请口令**。
-4. **Retry deployment** 重新部署。
+只需 **一步**：在 Pages 项目 → **Settings → Bindings** 绑定一个 **KV 命名空间**（变量名任意，代码会自动探测；也可叫 `LIBRETV_KV`），然后 **Retry deployment** 重新部署。
 
-> 验证：访问 `/api/me` 应返回 `401`（未登录）而不是 500；用管理员密码当邀请口令注册一个账号，右上角按钮即显示你的用户名。
-> 常见报错：`/api/login` 返回 `{"error":"KV 未绑定"}` → 第 2 步 KV 没绑；`{"error":"未配置 SESSION_SECRET"}` → 第 1 步没设。
+- 会话签名密钥**自动处理**：优先用 `SESSION_SECRET`（可选）；否则由站点密码派生；都没有则自动生成并存入 KV。
+- **注册**：进了站（通过站点密码）就能注册，无需管理员密码；设 `REQUIRE_INVITE=true` 可改为需管理员密码当邀请口令。
+
+> 验证：注册一个账号，右上角按钮显示你的用户名即成功。
+> 常见报错：`/api/login` 返回 `{"error":"KV 未绑定"}` → KV 绑定没加到 **Production** 环境或没重新部署。
 
 ### B. 开启「个人媒体库（上传到 R2）」
 在 A 的基础上，再加：
@@ -145,9 +144,9 @@ LibreTV 是一个轻量级、自托管的在线影视搜索与观看平台：聚
 | 名称 | 类型 | 必需 | 作用 |
 | --- | --- | --- | --- |
 | `PASSWORD` | 环境变量 | 强烈建议 | 站点访问密码 |
-| `ADMINPASSWORD` | 环境变量 | 私有云需要 | 管理员密码 / **注册邀请口令** |
-| `SESSION_SECRET` | 环境变量 | 账号功能必填 | 会话 token 签名密钥（长随机串） |
-| `OPEN_REGISTRATION` | 环境变量 | 可选 | 设 `true` 则放开自助注册（默认仅管理员） |
+| `ADMINPASSWORD` | 环境变量 | 可选 | 管理员密码（`REQUIRE_INVITE=true` 时兼作注册邀请口令） |
+| `SESSION_SECRET` | 环境变量 | 可选 | 会话签名密钥；不设则自动派生/生成（存 KV） |
+| `REQUIRE_INVITE` | 环境变量 | 可选 | 设 `true` 则注册需管理员密码当邀请口令（默认进站即可注册） |
 | `LIBRETV_KV` | KV 绑定 | 云同步/账号必需 | 存用户、历史、收藏、设置、媒体索引（也可用 `LIBRETV_PROXY_KV`） |
 | `MEDIA_R2` | R2 绑定 | 媒体库必需 | 存用户上传的视频文件 |
 | `R2_ACCOUNT_ID` / `R2_BUCKET` | 环境变量 | 媒体库必需 | R2 端点与桶名 |

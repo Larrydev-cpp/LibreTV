@@ -2,11 +2,6 @@
 // 多用户账号客户端：登录/注册弹窗 + window.Account（isLoggedIn/currentUser/login/register/logout/refresh）。
 // 未登录时不影响任何现有功能（历史/收藏仍走本地）。注册需管理员密码（邀请口令）。
 (function (global) {
-    const enc = new TextEncoder();
-    async function sha256Hex(s) {
-        const b = await crypto.subtle.digest('SHA-256', enc.encode(s));
-        return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
-    }
     function T(k) { return (typeof global.t === 'function') ? global.t(k) : k; }
     function toast(m, t) { if (typeof global.showToast === 'function') global.showToast(m, t); }
 
@@ -18,6 +13,11 @@
         opts = opts || {};
         opts.credentials = 'include';
         opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+        // 自动携带站点密码哈希（注册门槛用；占位符未替换或未设密码则不带）
+        try {
+            const hash = global.__ENV__ && global.__ENV__.PASSWORD;
+            if (hash && hash.indexOf('{{') === -1 && hash.length === 64) opts.headers['X-Auth-Hash'] = hash;
+        } catch (e) {}
         let r, data = null;
         try { r = await fetch(path, opts); } catch (e) { return { ok: false, status: 0, data: null }; }
         try { data = await r.json(); } catch (e) {}
@@ -36,9 +36,8 @@
         if (r.ok) await refresh();
         return r;
     }
-    async function register(username, password, adminPassword) {
-        const inviteSecret = adminPassword ? await sha256Hex(adminPassword) : '';
-        const r = await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password, inviteSecret }) });
+    async function register(username, password) {
+        const r = await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password }) });
         if (r.ok) await refresh();
         return r;
     }
@@ -67,7 +66,6 @@
           + '  <div id="acctOut">'
           + '    <input id="acctUser" type="text" autocomplete="username" class="w-full bg-[#222] border border-[#333] text-white px-3 py-2 rounded mb-2">'
           + '    <input id="acctPass" type="password" autocomplete="current-password" class="w-full bg-[#222] border border-[#333] text-white px-3 py-2 rounded mb-2">'
-          + '    <input id="acctAdmin" type="password" autocomplete="off" class="w-full bg-[#222] border border-[#333] text-white px-3 py-2 rounded mb-2 hidden">'
           + '    <button id="acctSubmit" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded mt-1"></button>'
           + '    <div class="text-center mt-3 text-sm text-gray-400"><a href="#" id="acctSwitch" class="hover:text-white underline"></a></div>'
           + '  </div>'
@@ -83,12 +81,10 @@
         function placeholders() {
             $('acctUser').placeholder = T('account.username');
             $('acctPass').placeholder = T('account.password');
-            $('acctAdmin').placeholder = T('account.invite');
         }
         function setMode(m) {
             mode = m;
             $('acctTitle').textContent = m === 'register' ? T('account.register') : T('account.login');
-            $('acctAdmin').classList.toggle('hidden', m !== 'register');
             $('acctSubmit').textContent = m === 'register' ? T('account.register') : T('account.login');
             $('acctSwitch').textContent = m === 'register' ? T('account.toLogin') : T('account.toRegister');
         }
@@ -111,7 +107,7 @@
         $('acctSubmit').onclick = async () => {
             const u = $('acctUser').value.trim(), p = $('acctPass').value;
             if (!u || !p) { toast(T('account.needUserPass'), 'warning'); return; }
-            const r = mode === 'register' ? await register(u, p, $('acctAdmin').value) : await login(u, p);
+            const r = mode === 'register' ? await register(u, p) : await login(u, p);
             if (r.ok) { render(); toast(mode === 'register' ? T('account.registered') : T('account.welcome'), 'success'); }
             else { toast((r.data && r.data.error) || T('account.failed'), 'error'); }
         };
