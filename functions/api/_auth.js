@@ -133,20 +133,27 @@ function normalizeUser(u) {
     return /^[a-z0-9_.-]{1,64}$/.test(u) ? u : null;
 }
 // 取 KV 命名空间：优先约定名；否则自动探测任意一个 KV 绑定（无论用户绑成什么变量名）。
-// KV 命名空间有 get/put/getWithMetadata；R2 桶没有 getWithMetadata，据此区分、避免误选 R2。
+// 注意不能用「有没有 get/getWithMetadata 方法」做鸭子类型判断——Pages 环境里的 ASSETS 等
+// RPC 绑定是代理对象，访问任意方法名 typeof 都是 function，会被误判（然后调用时抛
+// "The RPC receiver does not implement the method"）。改用构造器名精确识别 KvNamespace，
+// 再以「绑定变量名含 kv」兜底。
 function getKV(env) {
     if (!env) return null;
     if (env.LIBRETV_KV) return env.LIBRETV_KV;
     if (env.LIBRETV_PROXY_KV) return env.LIBRETV_PROXY_KV;
-    for (const k in env) {
-        const v = env[k];
-        if (v && typeof v === 'object'
-            && typeof v.get === 'function'
-            && typeof v.put === 'function'
-            && typeof v.getWithMetadata === 'function') {
-            return v;
+    try {
+        for (const k in env) {
+            const v = env[k];
+            if (!v || typeof v !== 'object') continue;
+            const cn = (v.constructor && v.constructor.name) || '';
+            if (cn === 'KvNamespace') return v;
         }
-    }
+        for (const k in env) {
+            if (!/kv/i.test(k)) continue;
+            const v = env[k];
+            if (v && typeof v === 'object' && typeof v.get === 'function') return v;
+        }
+    } catch (e) {}
     return null;
 }
 // 统一身份解析：优先会话（登录用户）；否则回退到旧的 ?user= + X-Auth-Hash（站点密码模式，向后兼容）。
