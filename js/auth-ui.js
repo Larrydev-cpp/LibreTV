@@ -56,9 +56,12 @@
         if (modal) return modal;
         modal = document.createElement('div');
         modal.id = 'accountModal';
-        modal.className = 'fixed inset-0 bg-black/80 hidden items-center justify-center z-[70] transition-opacity';
+        modal.className = 'fixed inset-0 hidden items-center justify-center transition-opacity';
+        // 层级/底色/宽度用内联样式写死：tailwind.css 是预编译产物，
+        // z-[70]/max-w-sm 这类 JS 里拼的任意值类没被编译进去，会导致弹窗被页面元素穿透
+        modal.style.cssText = 'z-index:10050;background:rgba(0,0,0,0.82);';
         modal.innerHTML =
-            '<div class="bg-[#111] p-6 rounded-lg w-11/12 max-w-sm border border-[#333]">'
+            '<div class="bg-[#111] p-6 rounded-lg w-11/12 border border-[#333]" style="max-width:24rem;position:relative;z-index:10051;">'
           + '  <div class="flex justify-between items-center mb-4">'
           + '    <h3 class="text-xl font-bold gradient-text" id="acctTitle"></h3>'
           + '    <button id="acctClose" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button>'
