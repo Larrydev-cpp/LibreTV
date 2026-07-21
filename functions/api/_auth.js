@@ -7,7 +7,7 @@
 
 const COOKIE = 'lt_session';
 const DEFAULT_TTL = 30 * 24 * 3600 * 1000; // 30 天
-const PBKDF2_ITER = 120000;
+const PBKDF2_ITER = 100000; // Cloudflare Workers 上限即 10 万，超过 crypto.subtle 会抛错
 const _enc = new TextEncoder();
 
 function b64urlEncode(bytes) {
