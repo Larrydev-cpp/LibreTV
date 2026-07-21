@@ -31,6 +31,8 @@
             // 注入的占位符未替换（{{PASSWORD}}）或为空则不带
             if (hash && hash.indexOf('{{') === -1) h['X-Auth-Hash'] = hash;
         } catch (e) {}
+        // 登录态：带 Bearer token（绕开 cookie）
+        try { if (global.Account && global.Account.authHeaders) Object.assign(h, global.Account.authHeaders()); } catch (e) {}
         return h;
     }
 

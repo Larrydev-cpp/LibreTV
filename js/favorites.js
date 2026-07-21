@@ -23,11 +23,16 @@
     function syncEnabled() {
         try { return !!(global.Account && global.Account.isLoggedIn && global.Account.isLoggedIn()); } catch (e) { return false; }
     }
+    function hdr(base) {
+        const h = Object.assign({}, base || {});
+        try { if (global.Account && global.Account.authHeaders) Object.assign(h, global.Account.authHeaders()); } catch (e) {}
+        return h;
+    }
     let pushTimer = null;
     function doPushFav() {
         return fetch(API, {
             method: 'POST', credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
+            headers: hdr({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ favorites: getFavorites() }), keepalive: true,
         }).catch(function () {});
     }
@@ -39,7 +44,7 @@
     }
     function pullFav() {
         if (!syncEnabled()) return Promise.resolve(null);
-        return fetch(API, { credentials: 'include' })
+        return fetch(API, { credentials: 'include', headers: hdr() })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) { return (d && Array.isArray(d.favorites)) ? d.favorites : null; })
             .catch(function () { return null; });

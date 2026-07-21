@@ -97,9 +97,15 @@ async function getSessionSecret(env, kv) {
     return s;
 }
 
-// 从请求里解析出 {userId} 或 null
+// 从请求里解析出 {userId} 或 null。
+// 优先 Authorization: Bearer <token>（或 X-Session-Token）——绕开浏览器 cookie 策略；
+// 取不到再回落到 lt_session cookie。
 async function readSession(request, env) {
-    const tok = readCookie(request, COOKIE);
+    let tok = null;
+    const auth = request.headers.get('Authorization') || '';
+    if (/^Bearer\s+/i.test(auth)) tok = auth.replace(/^Bearer\s+/i, '').trim();
+    if (!tok) tok = request.headers.get('X-Session-Token') || null;
+    if (!tok) tok = readCookie(request, COOKIE);
     if (!tok) return null;
     const secret = await getSessionSecret(env);
     return secret ? verifySession(tok, secret) : null;

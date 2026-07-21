@@ -5,14 +5,25 @@
     function T(k) { return (typeof global.t === 'function') ? global.t(k) : k; }
     function toast(m, t) { if (typeof global.showToast === 'function') global.showToast(m, t); }
 
+    const TOKEN_KEY = 'ltSessionToken';
     const state = { loggedIn: false, userId: null };
     function isLoggedIn() { return !!state.loggedIn; }
     function currentUser() { return state.userId; }
+    function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+    function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+    // 供 history-sync / favorites / settings-sync 复用：登录态下带 Bearer token（绕开 cookie）
+    function authHeaders() {
+        const t = getToken();
+        return t ? { 'Authorization': 'Bearer ' + t } : {};
+    }
 
     async function api(path, opts) {
         opts = opts || {};
         opts.credentials = 'include';
         opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+        // 会话 token（首选，绕开 Safari cookie 限制）
+        const tok = getToken();
+        if (tok) opts.headers['Authorization'] = 'Bearer ' + tok;
         // 自动携带站点密码哈希（注册门槛用；占位符未替换或未设密码则不带）
         try {
             const hash = global.__ENV__ && global.__ENV__.PASSWORD;
@@ -31,18 +42,28 @@
         try { document.dispatchEvent(new CustomEvent('lt-auth-changed', { detail: Object.assign({}, state) })); } catch (e) {}
         return state;
     }
+    // 登录/注册成功：立刻从响应体确立登录态并更新按钮（不依赖后续 /api/me 往返），
+    // 存下 token 供之后所有请求用 Bearer 头携带；再 refresh() 兜底。
+    function onAuthed(data) {
+        if (data && data.token) setToken(data.token);
+        state.loggedIn = true;
+        state.userId = (data && data.userId) || state.userId;
+        updateButton();
+        try { document.dispatchEvent(new CustomEvent('lt-auth-changed', { detail: Object.assign({}, state) })); } catch (e) {}
+    }
     async function login(username, password) {
         const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
-        if (r.ok) await refresh();
+        if (r.ok) { onAuthed(r.data); refresh(); }
         return r;
     }
     async function register(username, password) {
         const r = await api('/api/register', { method: 'POST', body: JSON.stringify({ username, password }) });
-        if (r.ok) await refresh();
+        if (r.ok) { onAuthed(r.data); refresh(); }
         return r;
     }
     async function logout() {
         await api('/api/logout', { method: 'POST' });
+        setToken('');
         await refresh();
     }
 
@@ -120,7 +141,7 @@
     function open() { buildModal(); modal._render(); modal.classList.remove('hidden'); modal.classList.add('flex'); }
     function close() { if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); } }
 
-    global.Account = { isLoggedIn, currentUser, login, register, logout, refresh, open };
+    global.Account = { isLoggedIn, currentUser, login, register, logout, refresh, open, authHeaders, getToken };
     global.openAccountModal = open;
 
     document.addEventListener('DOMContentLoaded', function () { updateButton(); refresh(); });

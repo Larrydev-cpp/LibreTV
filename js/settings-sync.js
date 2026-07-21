@@ -25,11 +25,16 @@
             try { const v = obj[k]; if (v != null) localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); } catch (e) {}
         });
     }
+    function hdr(base) {
+        const h = Object.assign({}, base || {});
+        try { if (global.Account && global.Account.authHeaders) Object.assign(h, global.Account.authHeaders()); } catch (e) {}
+        return h;
+    }
     let pushTimer = null;
     function doPush() {
         return fetch(API, {
             method: 'PUT', credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
+            headers: hdr({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ settings: collect() }), keepalive: true,
         }).catch(function () {});
     }
@@ -41,7 +46,7 @@
     }
     function pull() {
         if (!enabled()) return Promise.resolve(null);
-        return fetch(API, { credentials: 'include' })
+        return fetch(API, { credentials: 'include', headers: hdr() })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) { return (d && d.settings) || null; })
             .catch(function () { return null; });

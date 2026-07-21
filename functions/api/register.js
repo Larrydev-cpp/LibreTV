@@ -54,5 +54,5 @@ async function handle(context) {
     const secret = await getSessionSecret(env, kv);
     if (!secret) return json({ error: '服务端无法生成会话密钥' }, 500);
     const token = await issueSession(userId, secret, DEFAULT_TTL);
-    return json({ ok: true, userId }, 200, { 'Set-Cookie': buildSessionCookie(token, DEFAULT_TTL, isSecure(request)) });
+    return json({ ok: true, userId, token }, 200, { 'Set-Cookie': buildSessionCookie(token, DEFAULT_TTL, isSecure(request)) });
 }
