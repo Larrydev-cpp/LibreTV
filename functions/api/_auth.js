@@ -84,7 +84,7 @@ async function getSessionSecret(env, kv) {
         return sha256Hex('lt|' + (env.PASSWORD || '') + '|' + (env.ADMINPASSWORD || ''));
     }
     if (_cachedSecret) return _cachedSecret;
-    kv = kv || getKV(env);
+    kv = kv || (await getKV(env));
     if (!kv) return null;
     const KEY = '_cfg:session_secret';
     let s = null;
@@ -132,26 +132,30 @@ function normalizeUser(u) {
     u = (u || '').trim().toLowerCase();
     return /^[a-z0-9_.-]{1,64}$/.test(u) ? u : null;
 }
-// 取 KV 命名空间：优先约定名；否则自动探测任意一个 KV 绑定（无论用户绑成什么变量名）。
-// 注意不能用「有没有 get/getWithMetadata 方法」做鸭子类型判断——Pages 环境里的 ASSETS 等
-// RPC 绑定是代理对象，访问任意方法名 typeof 都是 function，会被误判（然后调用时抛
-// "The RPC receiver does not implement the method"）。改用构造器名精确识别 KvNamespace，
-// 再以「绑定变量名含 kv」兜底。
-function getKV(env) {
+// 取 KV 命名空间（async）：不猜名字、不做鸭子类型（RPC 代理对任意方法名 typeof 都是
+// function，构造器名在生产 workerd 也不可靠）——对候选绑定**真调一次**
+// getWithMetadata('__lt_probe__')：真 KV 返回含 value 字段的对象；ASSETS/R2 等 RPC 代理
+// 会抛 "does not implement"、原生非 KV 没这个方法。命中后按 isolate 缓存，几乎零开销。
+let _kvCache = null;
+async function _probeKV(v) {
+    if (!v || typeof v !== 'object' || typeof v.getWithMetadata !== 'function') return false;
+    try {
+        const r = await v.getWithMetadata('__lt_probe__');
+        return !!(r && typeof r === 'object' && 'value' in r);
+    } catch (e) { return false; }
+}
+async function getKV(env) {
+    if (_kvCache) return _kvCache;
     if (!env) return null;
-    if (env.LIBRETV_KV) return env.LIBRETV_KV;
-    if (env.LIBRETV_PROXY_KV) return env.LIBRETV_PROXY_KV;
+    // 优先显式/已知绑定名（liberTV 为部署实际使用的名字）
+    for (const name of ['LIBRETV_KV', 'LIBRETV_PROXY_KV', 'liberTV']) {
+        if (env[name] && (await _probeKV(env[name]))) { _kvCache = env[name]; return _kvCache; }
+    }
     try {
         for (const k in env) {
+            if (k === 'ASSETS') continue;
             const v = env[k];
-            if (!v || typeof v !== 'object') continue;
-            const cn = (v.constructor && v.constructor.name) || '';
-            if (cn === 'KvNamespace') return v;
-        }
-        for (const k in env) {
-            if (!/kv/i.test(k)) continue;
-            const v = env[k];
-            if (v && typeof v === 'object' && typeof v.get === 'function') return v;
+            if (await _probeKV(v)) { _kvCache = v; return _kvCache; }
         }
     } catch (e) {}
     return null;

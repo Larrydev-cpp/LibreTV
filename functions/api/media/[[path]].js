@@ -8,7 +8,7 @@ export async function onRequest(context) {
 
     const sess = await readSession(request, env);
     if (!sess) return new Response('unauthorized', { status: 401 });
-    const kv = getKV(env);
+    const kv = await getKV(env);
     if (!kv || !env.MEDIA_R2) return new Response('R2/KV 未配置', { status: 500 });
 
     const id = Array.isArray(params.path) ? params.path[0] : params.path;

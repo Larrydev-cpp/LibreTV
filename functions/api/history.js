@@ -62,7 +62,7 @@ export async function onRequest(context) {
         return new Response(null, { headers: corsHeaders() });
     }
 
-    const kv = getKV(env);
+    const kv = await getKV(env);
     if (!kv) {
         return json({ error: 'KV 未绑定：请在 Cloudflare 绑定一个 KV 命名空间' }, 500);
     }

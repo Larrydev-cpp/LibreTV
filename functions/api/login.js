@@ -14,7 +14,7 @@ async function handle(context) {
     const { request, env } = context;
     if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
-    const kv = getKV(env);
+    const kv = await getKV(env);
     if (!kv) return json({ error: 'KV 未绑定' }, 500);
 
     const body = await request.json().catch(() => null);

@@ -9,7 +9,7 @@ export async function onRequest(context) {
 
     const sess = await readSession(request, env);
     if (!sess) return json({ error: 'unauthorized' }, 401);
-    const kv = getKV(env);
+    const kv = await getKV(env);
     if (!kv) return json({ error: 'KV 未绑定' }, 500);
 
     const body = await request.json().catch(() => null);

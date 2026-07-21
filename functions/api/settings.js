@@ -14,7 +14,7 @@ export async function onRequest(context) {
     const { request, env } = context;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
 
-    const kv = getKV(env);
+    const kv = await getKV(env);
     if (!kv) return json({ error: 'KV 未绑定' }, 500);
 
     const userId = await resolveIdentity(request, env);
