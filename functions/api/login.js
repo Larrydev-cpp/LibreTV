@@ -2,6 +2,15 @@
 import { json, getKV, normalizeUser, pbkdf2Verify, issueSession, getSessionSecret, buildSessionCookie, isSecure, DEFAULT_TTL } from './_auth.js';
 
 export async function onRequest(context) {
+    // 兜底捕获：Workers 未捕获异常只会给用户一个空白 1101，这里转成结构化错误便于排障
+    try {
+        return await handle(context);
+    } catch (e) {
+        return json({ error: 'server error', detail: String((e && e.message) || e) }, 500);
+    }
+}
+
+async function handle(context) {
     const { request, env } = context;
     if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 

@@ -8,6 +8,14 @@
 import { json, getKV, normalizeUser, sha256Hex, timingSafeEqual, pbkdf2Hash, issueSession, getSessionSecret, buildSessionCookie, isSecure, DEFAULT_TTL } from './_auth.js';
 
 export async function onRequest(context) {
+    try {
+        return await handle(context);
+    } catch (e) {
+        return json({ error: 'server error', detail: String((e && e.message) || e) }, 500);
+    }
+}
+
+async function handle(context) {
     const { request, env } = context;
     if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
