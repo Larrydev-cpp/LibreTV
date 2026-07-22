@@ -544,13 +544,22 @@ async function handleMultipleCustomSearch(searchQuery, customApiUrls) {
 }
 
 // 拦截API请求
+// 只接管 handleApiRequest 真正实现的两个"虚拟路由"（/api/search、/api/detail——
+// 客户端直接拼目标站 URL 走 PROXY_URL，这两个路径在服务端并不存在）。
+// 早年这里用 startsWith('/api/') 通配一切，账号/同步/媒体库后来在 functions/api/ 下
+// 加了一整套真实的 Cloudflare Pages Functions（/api/login /api/me /api/history
+// /api/favorites /api/settings /api/media/* 等），却都被这个通配吞掉、从未真正发出去，
+// handleApiRequest 找不到匹配分支只会 throw '未知的API路径' 并包装成一个假 200 响应——
+// 这正是登录/云同步一直诡异失败的根因。
+const LT_VIRTUAL_API_PATHS = ['/api/search', '/api/detail'];
+
 (function() {
     const originalFetch = window.fetch;
-    
+
     window.fetch = async function(input, init) {
         const requestUrl = typeof input === 'string' ? new URL(input, window.location.origin) : input.url;
-        
-        if (requestUrl.pathname.startsWith('/api/')) {
+
+        if (LT_VIRTUAL_API_PATHS.includes(requestUrl.pathname)) {
             if (window.isPasswordProtected && window.isPasswordVerified) {
                 if (window.isPasswordProtected() && !window.isPasswordVerified()) {
                     return;
@@ -576,8 +585,8 @@ async function handleMultipleCustomSearch(searchQuery, customApiUrls) {
                 });
             }
         }
-        
-        // 非API请求使用原始fetch
+
+        // 其余请求（包括所有真实后端 /api/* 路由）一律用原始 fetch 直接发到网络
         return originalFetch.apply(this, arguments);
     };
 })();
