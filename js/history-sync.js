@@ -95,16 +95,26 @@
             .catch(function () { return null; });
     }
 
-    // 拉取并与本地合并，回写本地 + 回推服务端（使服务端为并集），刷新历史面板
-    function syncNow() {
+    // 是否为账号登录态（区别于旧的 ltUsername 自填模式）——只有登录才弹合并提示
+    function isAccount() {
+        try { return !!(global.Account && global.Account.isLoggedIn && global.Account.isLoggedIn()); } catch (e) { return false; }
+    }
+    // 拉取并与本地合并，回写本地 + 回推服务端（使服务端为并集），刷新历史面板。
+    // announce=true 且为账号登录态时，弹一条「已把本地历史合并到账号（共 N 条）」，让用户看到数据已并入。
+    function syncNow(announce) {
         if (!enabled()) return Promise.resolve(false);
+        const before = readLocal();
         return pull().then(function (remote) {
             if (remote == null) return false;
-            const merged = merge(remote, readLocal());
+            const merged = merge(remote, before);
             writeLocal(merged);
             push(true);
             if (typeof global.loadViewingHistory === 'function') {
                 try { global.loadViewingHistory(); } catch (e) {}
+            }
+            if (announce && isAccount() && typeof global.showToast === 'function') {
+                const T = (typeof global.t === 'function') ? global.t : function (k) { return k; };
+                global.showToast(T('toast.mergedHist1') + merged.length + T('toast.mergedHist2'), 'success');
             }
             return true;
         });
@@ -140,10 +150,10 @@
     document.addEventListener('DOMContentLoaded', function () {
         const input = document.getElementById('usernameInput');
         if (input && !(global.Account && global.Account.isLoggedIn && global.Account.isLoggedIn())) input.value = getUsername();
-        syncNow();
+        syncNow(false); // 页面自动同步，不弹提示
     });
-    // 登录/登出后立即同步该账号的云端历史
-    document.addEventListener('lt-auth-changed', function () { syncNow(); });
+    // 登录/登出后立即同步该账号的云端历史；刚登录时弹一条「已合并 N 条」让用户看到
+    document.addEventListener('lt-auth-changed', function () { syncNow(true); });
 
     global.HistorySync = {
         getUsername: getUsername, setUsername: setUsername, enabled: enabled,

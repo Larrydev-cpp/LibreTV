@@ -59,7 +59,8 @@
         });
         return Array.from(map.values()).sort(function (x, y) { return (y.timestamp || 0) - (x.timestamp || 0); }).slice(0, MAX);
     }
-    function syncFavorites() {
+    // announce=true 时（刚登录），弹一条「已把本地收藏合并到账号（共 N 条）」让用户看到数据已并入
+    function syncFavorites(announce) {
         if (!syncEnabled()) return Promise.resolve(false);
         return pullFav().then(function (remote) {
             if (remote == null) return false;
@@ -67,6 +68,9 @@
             try { localStorage.setItem(KEY, JSON.stringify(merged.slice(0, MAX))); } catch (e) {}
             pushFav(true);
             loadFavorites();
+            if (announce && typeof global.showToast === 'function') {
+                global.showToast(_favT('toast.mergedFav1') + merged.length + _favT('toast.mergedFav2'), 'success');
+            }
             return true;
         });
     }
@@ -208,8 +212,8 @@
         };
     }
 
-    // 登录/登出后同步该账号收藏；切后台/刷新时冲刷一次
-    document.addEventListener('lt-auth-changed', function () { syncFavorites(); });
+    // 登录/登出后同步该账号收藏；刚登录时弹一条「已合并 N 条」让用户看到；切后台/刷新时冲刷一次
+    document.addEventListener('lt-auth-changed', function () { syncFavorites(true); });
     global.addEventListener('pagehide', function () { pushFav(true); });
 
     // 暴露到全局（onclick 与其它脚本调用）
