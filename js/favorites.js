@@ -42,12 +42,18 @@
         if (pushTimer) clearTimeout(pushTimer);
         pushTimer = setTimeout(doPushFav, 1500);
     }
+    // 同 history-sync.js 的 pull()：保留真实失败原因（{ok:false,status,error}），不再压成 null，
+    // 便于以后需要诊断时能看到真因，而不是一句猜测。
     function pullFav() {
-        if (!syncEnabled()) return Promise.resolve(null);
+        if (!syncEnabled()) return Promise.resolve({ ok: false, status: -1, error: 'sync disabled' });
         return fetch(API, { credentials: 'include', headers: hdr() })
-            .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (d) { return (d && Array.isArray(d.favorites)) ? d.favorites : null; })
-            .catch(function () { return null; });
+            .then(function (r) {
+                return r.json().catch(function () { return null; }).then(function (d) {
+                    if (r.ok && d && Array.isArray(d.favorites)) return { ok: true, data: d.favorites };
+                    return { ok: false, status: r.status, error: (d && d.error) || ('HTTP ' + r.status) };
+                });
+            })
+            .catch(function (e) { return { ok: false, status: 0, error: (e && e.message) || String(e) }; });
     }
     function mergeFav(a, b) {
         const map = new Map();
@@ -62,9 +68,9 @@
     // announce=true 时（刚登录），弹一条「已把本地收藏合并到账号（共 N 条）」让用户看到数据已并入
     function syncFavorites(announce) {
         if (!syncEnabled()) return Promise.resolve(false);
-        return pullFav().then(function (remote) {
-            if (remote == null) return false;
-            const merged = mergeFav(remote, getFavorites());
+        return pullFav().then(function (res) {
+            if (!res.ok) return false; // 背景同步失败保持静默（history-sync 的登录提示已经够用，避免刷屏）
+            const merged = mergeFav(res.data, getFavorites());
             try { localStorage.setItem(KEY, JSON.stringify(merged.slice(0, MAX))); } catch (e) {}
             pushFav(true);
             loadFavorites();

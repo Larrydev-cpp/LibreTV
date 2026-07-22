@@ -44,18 +44,24 @@
         if (pushTimer) clearTimeout(pushTimer);
         pushTimer = setTimeout(doPush, 1500);
     }
+    // 同 history-sync.js 的 pull()：保留真实失败原因，不再压成 null
     function pull() {
-        if (!enabled()) return Promise.resolve(null);
+        if (!enabled()) return Promise.resolve({ ok: false, status: -1, error: 'sync disabled' });
         return fetch(API, { credentials: 'include', headers: hdr() })
-            .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (d) { return (d && d.settings) || null; })
-            .catch(function () { return null; });
+            .then(function (r) {
+                return r.json().catch(function () { return null; }).then(function (d) {
+                    if (r.ok && d && d.settings) return { ok: true, data: d.settings };
+                    return { ok: false, status: r.status, error: (d && d.error) || ('HTTP ' + r.status) };
+                });
+            })
+            .catch(function (e) { return { ok: false, status: 0, error: (e && e.message) || String(e) }; });
     }
     // 登录后：云端有则拉下来应用（部分需刷新生效，主题即时生效）；云端空则把本地推上去
     function syncOnLogin() {
         if (!enabled()) return Promise.resolve(false);
-        return pull().then(function (remote) {
-            if (!remote || Object.keys(remote).length === 0) { push(true); return false; }
+        return pull().then(function (res) {
+            if (!res.ok || Object.keys(res.data).length === 0) { push(true); return false; }
+            const remote = res.data;
             apply(remote);
             try { if (remote.ltTheme) document.documentElement.setAttribute('data-theme', remote.ltTheme === 'contrast' ? 'contrast' : 'seaside'); } catch (e) {}
             if (typeof global.showToast === 'function') global.showToast(T('toast.settingsSynced'), 'info');

@@ -86,13 +86,29 @@
         pushTimer = setTimeout(doPush, PUSH_DEBOUNCE);
         return Promise.resolve();
     }
-    // 从服务端拉取历史数组；失败/不可用返回 null
+    // 从服务端拉取历史数组。
+    // 成功：{ ok:true, data:[...] }；失败：{ ok:false, status, error }——
+    // status=0 表示真·网络异常（fetch 抛错/超时/CORS），其余为服务端实际返回的 HTTP 状态码
+    // + 结构化错误文本（来自 functions/api/history.js 的 {error:"..."}）。
+    // 不再把"401 鉴权不对"“500 KV 没绑好”“真的断网”统一压成一句猜测式提示。
     function pull() {
-        if (!enabled()) return Promise.resolve(null);
+        if (!enabled()) return Promise.resolve({ ok: false, status: -1, error: 'sync disabled' });
         return fetch(qs(getUsername()), { headers: authHeaders(), credentials: 'include' })
-            .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (d) { return (d && Array.isArray(d.history)) ? d.history : null; })
-            .catch(function () { return null; });
+            .then(function (r) {
+                return r.json().catch(function () { return null; }).then(function (d) {
+                    if (r.ok && d && Array.isArray(d.history)) return { ok: true, data: d.history };
+                    return { ok: false, status: r.status, error: (d && d.error) || ('HTTP ' + r.status) };
+                });
+            })
+            .catch(function (e) {
+                return { ok: false, status: 0, error: (e && e.message) || String(e) };
+            });
+    }
+    // 把 pull() 的失败原因拼成人话：网络异常 vs 服务端返回的具体错误
+    function describeFail(res) {
+        const T = (typeof global.t === 'function') ? global.t : function (k) { return k; };
+        const reason = (res.status === 0) ? T('toast.networkError') : ('HTTP ' + res.status + '：' + res.error);
+        return T('toast.syncFailDetail1') + reason + T('toast.syncFailDetail2');
     }
 
     // 是否为账号登录态（区别于旧的 ltUsername 自填模式）——只有登录才弹合并提示
@@ -104,9 +120,16 @@
     function syncNow(announce) {
         if (!enabled()) return Promise.resolve(false);
         const before = readLocal();
-        return pull().then(function (remote) {
-            if (remote == null) return false;
-            const merged = merge(remote, before);
+        return pull().then(function (res) {
+            if (!res.ok) {
+                // 后台自动同步失败：仅登录态且明确要求 announce 时才提示，避免每次刷新都打扰；
+                // 但既然报了，就报真实原因。
+                if (announce && isAccount() && typeof global.showToast === 'function') {
+                    global.showToast(describeFail(res), 'warning');
+                }
+                return false;
+            }
+            const merged = merge(res.data, before);
             writeLocal(merged);
             push(true);
             if (typeof global.loadViewingHistory === 'function') {
@@ -128,9 +151,9 @@
         const T = (typeof global.t === 'function') ? global.t : function (k) { return k; };
         setUsername(name);
         if (!name) { toast(T('toast.userCleared'), 'info'); return; }
-        pull().then(function (remote) {
-            if (remote == null) { toast(T('toast.syncFail'), 'warning'); return; }
-            const merged = merge(remote, readLocal());
+        pull().then(function (res) {
+            if (!res.ok) { toast(describeFail(res), 'warning'); return; }
+            const merged = merge(res.data, readLocal());
             writeLocal(merged);
             push(true);
             if (typeof global.loadViewingHistory === 'function') {
