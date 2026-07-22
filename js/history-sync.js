@@ -152,8 +152,11 @@
         if (input && !(global.Account && global.Account.isLoggedIn && global.Account.isLoggedIn())) input.value = getUsername();
         syncNow(false); // 页面自动同步，不弹提示
     });
-    // 登录/登出后立即同步该账号的云端历史；刚登录时弹一条「已合并 N 条」让用户看到
-    document.addEventListener('lt-auth-changed', function () { syncNow(true); });
+    // 登录/登出后立即同步该账号的云端历史；仅「刚登录」(detail.fresh) 时弹一条「已合并 N 条」，
+    // 页面加载的会话校验(fresh=false)只静默同步、不弹提示。
+    document.addEventListener('lt-auth-changed', function (e) {
+        syncNow(!!(e && e.detail && e.detail.fresh));
+    });
 
     global.HistorySync = {
         getUsername: getUsername, setUsername: setUsername, enabled: enabled,

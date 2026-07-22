@@ -16,6 +16,34 @@
         const t = getToken();
         return t ? { 'Authorization': 'Bearer ' + t } : {};
     }
+    // 解析会话 token 的 payload（不校验签名，仅取 userId 供本地即时显示；服务端仍会校验）
+    function decodeToken(tok) {
+        try {
+            const p = String(tok || '').split('.')[0];
+            if (!p) return null;
+            let s = p.replace(/-/g, '+').replace(/_/g, '/');
+            while (s.length % 4) s += '=';
+            const obj = JSON.parse(atob(s));
+            if (!obj || !obj.u) return null;
+            if (obj.exp && Date.now() > obj.exp) return null; // 已过期
+            return { userId: obj.u };
+        } catch (e) { return null; }
+    }
+    // 页面加载即从本地 token 恢复登录态并更新按钮（不等 /api/me 往返，避免"登录态闪没"）；
+    // token 过期或损坏才清掉。
+    function restoreFromToken() {
+        const tok = getToken();
+        if (!tok) return false;
+        const d = decodeToken(tok);
+        if (!d) { setToken(''); return false; }
+        state.loggedIn = true;
+        state.userId = d.userId;
+        updateButton();
+        return true;
+    }
+    function emitAuthChanged(fresh) {
+        try { document.dispatchEvent(new CustomEvent('lt-auth-changed', { detail: Object.assign({ fresh: !!fresh }, state) })); } catch (e) {}
+    }
 
     async function api(path, opts) {
         opts = opts || {};
@@ -34,22 +62,32 @@
         try { data = await r.json(); } catch (e) {}
         return { ok: r.ok, status: r.status, data };
     }
+    // 校验会话：成功则确认登录态；仅在服务端"明确未登录"(401) 时才登出并清 token。
+    // 网络失败(status 0)或服务器错误(5xx)一律保持现状，绝不把已登录用户"闪回"登录。
     async function refresh() {
         const r = await api('/api/me', { method: 'GET' });
-        state.loggedIn = !!(r.ok && r.data && r.data.loggedIn);
-        state.userId = state.loggedIn ? r.data.userId : null;
+        if (r.status === 0) return state;                       // 网络失败：不动现状
+        if (r.ok && r.data && r.data.loggedIn) {
+            state.loggedIn = true;
+            state.userId = r.data.userId;
+        } else if (r.status === 401) {                          // 明确未登录：令牌失效
+            state.loggedIn = false; state.userId = null; setToken('');
+        } else {
+            return state;                                       // 其它(如 5xx)：保守不动
+        }
         updateButton();
-        try { document.dispatchEvent(new CustomEvent('lt-auth-changed', { detail: Object.assign({}, state) })); } catch (e) {}
+        emitAuthChanged(false);                                 // 页面加载校验，不弹合并提示
         return state;
     }
     // 登录/注册成功：立刻从响应体确立登录态并更新按钮（不依赖后续 /api/me 往返），
     // 存下 token 供之后所有请求用 Bearer 头携带；再 refresh() 兜底。
+    // fresh:true 表示"刚刚登录/注册"——history-sync/favorites 据此弹一次合并提示。
     function onAuthed(data) {
         if (data && data.token) setToken(data.token);
         state.loggedIn = true;
         state.userId = (data && data.userId) || state.userId;
         updateButton();
-        try { document.dispatchEvent(new CustomEvent('lt-auth-changed', { detail: Object.assign({}, state) })); } catch (e) {}
+        emitAuthChanged(true);
     }
     async function login(username, password) {
         const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
@@ -144,5 +182,9 @@
     global.Account = { isLoggedIn, currentUser, login, register, logout, refresh, open, authHeaders, getToken };
     global.openAccountModal = open;
 
-    document.addEventListener('DOMContentLoaded', function () { updateButton(); refresh(); });
+    document.addEventListener('DOMContentLoaded', function () {
+        restoreFromToken();  // 有 token 立刻显示用户名，避免刷新后"登录态闪没"
+        updateButton();
+        refresh();           // 后台校验；网络抖动不会把已登录用户登出
+    });
 })(window);

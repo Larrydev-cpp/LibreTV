@@ -212,8 +212,10 @@
         };
     }
 
-    // 登录/登出后同步该账号收藏；刚登录时弹一条「已合并 N 条」让用户看到；切后台/刷新时冲刷一次
-    document.addEventListener('lt-auth-changed', function () { syncFavorites(true); });
+    // 登录/登出后同步该账号收藏；仅「刚登录」(detail.fresh) 时弹一条「已合并 N 条」；切后台/刷新时冲刷一次
+    document.addEventListener('lt-auth-changed', function (e) {
+        syncFavorites(!!(e && e.detail && e.detail.fresh));
+    });
     global.addEventListener('pagehide', function () { pushFav(true); });
 
     // 暴露到全局（onclick 与其它脚本调用）
