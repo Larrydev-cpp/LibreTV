@@ -316,6 +316,14 @@
                 </div>
             </div>
 
+            <!-- 数据备份（历史+收藏；导入为合并，绝不覆盖）区域 -->
+            <div class="p-3 bg-[#151515] rounded-lg shadow-inner">
+                <label class="block text-sm font-medium text-gray-400 mb-1 border-b border-[#333] pb-1" data-i18n="backup.title">数据备份</label>
+                <p class="text-xs text-gray-500 mb-3" data-i18n="backup.desc">把观看历史和收藏导出成文件存到本地，防止清缓存或换设备时丢失；导入时与现有记录合并，不会覆盖。</p>
+                <button onclick="exportLibreData()" class="px-4 py-2 w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:from-indigo-600 hover:via-purple-600 hover:to-pink-600 text-white rounded-lg text-sm transition-all duration-300 shadow-md hover:shadow-lg mb-2" data-i18n="backup.export">导出历史与收藏</button>
+                <button onclick="importLibreData()" class="px-4 py-2 w-full bg-[#222] hover:bg-[#333] border border-[#444] text-white rounded-lg text-sm transition-all duration-300 shadow-md hover:shadow-lg" data-i18n="backup.import">从文件导入（合并）</button>
+            </div>
+
             <!-- 自定义代理地址区域 -->
             <div class="p-3 bg-[#151515] rounded-lg shadow-inner">
                 <label class="block text-sm font-medium text-gray-400 mb-1 border-b border-[#333] pb-1" data-i18n="settings.customProxy">自定义代理地址</label>
@@ -589,6 +597,7 @@
     <script src="js/search.js"></script>
     <script src="js/app.js"></script>
     <script src="js/favorites.js?v=4"></script>
+    <script src="js/backup.js?v=1"></script>
     <script src="js/media-library.js"></script>
 
     <!-- PWA 注册 -->

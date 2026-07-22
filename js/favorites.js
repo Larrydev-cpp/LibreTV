@@ -226,6 +226,6 @@
     global.removeFavoriteByKey = removeFavoriteByKey;
     global.Favorites = {
         getFavorites, isFavorited, addFavorite, removeFavorite, toggleFavorite,
-        favKey, bindButton, setBtnState, loadFavorites,
+        favKey, bindButton, setBtnState, loadFavorites, pushFav, syncFavorites,
     };
 })(window);
