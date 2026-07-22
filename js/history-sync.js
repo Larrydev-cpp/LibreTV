@@ -95,9 +95,18 @@
         if (!enabled()) return Promise.resolve({ ok: false, status: -1, error: 'sync disabled' });
         return fetch(qs(getUsername()), { headers: authHeaders(), credentials: 'include' })
             .then(function (r) {
-                return r.json().catch(function () { return null; }).then(function (d) {
+                // 先取原始文本再自己 parse：即便 200 但 body 不是预期的 {history:[...]} 形状
+                // （空 body / 不是 JSON / 字段对不上），也能把实际内容摘一段出来，而不是无信息的 "HTTP 200"。
+                return r.text().then(function (raw) {
+                    let d = null;
+                    try { d = raw ? JSON.parse(raw) : null; } catch (e) {}
                     if (r.ok && d && Array.isArray(d.history)) return { ok: true, data: d.history };
-                    return { ok: false, status: r.status, error: (d && d.error) || ('HTTP ' + r.status) };
+                    let detail;
+                    if (d && d.error) detail = d.error;
+                    else if (!raw) detail = '(空响应体)';
+                    else if (d == null) detail = '响应不是合法 JSON：' + raw.slice(0, 120);
+                    else detail = '响应结构不对：' + raw.slice(0, 120);
+                    return { ok: false, status: r.status, error: detail };
                 });
             })
             .catch(function (e) {

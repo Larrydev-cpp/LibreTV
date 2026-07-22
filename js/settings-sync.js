@@ -49,9 +49,16 @@
         if (!enabled()) return Promise.resolve({ ok: false, status: -1, error: 'sync disabled' });
         return fetch(API, { credentials: 'include', headers: hdr() })
             .then(function (r) {
-                return r.json().catch(function () { return null; }).then(function (d) {
+                return r.text().then(function (raw) {
+                    let d = null;
+                    try { d = raw ? JSON.parse(raw) : null; } catch (e) {}
                     if (r.ok && d && d.settings) return { ok: true, data: d.settings };
-                    return { ok: false, status: r.status, error: (d && d.error) || ('HTTP ' + r.status) };
+                    let detail;
+                    if (d && d.error) detail = d.error;
+                    else if (!raw) detail = '(空响应体)';
+                    else if (d == null) detail = '响应不是合法 JSON：' + raw.slice(0, 120);
+                    else detail = '响应结构不对：' + raw.slice(0, 120);
+                    return { ok: false, status: r.status, error: detail };
                 });
             })
             .catch(function (e) { return { ok: false, status: 0, error: (e && e.message) || String(e) }; });
