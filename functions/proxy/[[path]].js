@@ -459,6 +459,21 @@ export async function onRequest(context) {
             kvNamespace = null;
         }
 
+        // 二进制媒体（.ts 分片 / mp4 / 图片…）**从不写入 KV**（见下方 isTextual 分支：
+        // 非文本内容提前流式返回，不会走到写缓存那一步）。因此对它们查 KV 是 100% 必然
+        // miss，纯粹给每个分片白加一次阻塞往返——而 HLS 的每个分片都会被改写走本代理，
+        // 于是每次播放都在为几百上千个分片付这笔无谓延迟。这里按扩展名先判定并跳过。
+        // 另：带 Range 的请求是分段拉取，同样不该走整体内容缓存。
+        const hasRange = !!request.headers.get('Range');
+        const looksBinaryMedia = (function () {
+            const u = targetUrl.toLowerCase();
+            return MEDIA_FILE_EXTENSIONS.some((ext) => u.endsWith(ext) || u.includes(ext + '?'));
+        })();
+        if (looksBinaryMedia || hasRange) {
+            logDebug(`跳过 KV 查询（二进制媒体或 Range 请求）: ${targetUrl}`);
+            kvNamespace = null;
+        }
+
         if (kvNamespace) {
             try {
                 const cachedDataJson = await kvNamespace.get(cacheKey); // 直接获取字符串
@@ -495,8 +510,15 @@ export async function onRequest(context) {
             // Referer 设为目标自身 origin，利于绕过豆瓣等图片防盗链
             'Referer': new URL(targetUrl).origin
         });
+        // 转发 Range：播放器拖动进度、Safari 播放进度式 MP4 都依赖字节范围请求。
+        // 之前这个头被丢掉且响应硬编码 200，等于告诉浏览器"不支持范围请求"。
+        const clientRange = request.headers.get('Range');
+        if (clientRange) reqHeaders.set('Range', clientRange);
+
         const upstream = await fetch(targetUrl, { headers: reqHeaders, redirect: 'follow' });
-        if (!upstream.ok) {
+        // 206 Partial Content 是成功的（upstream.ok 只覆盖 200-299，206 在内），
+        // 这里仍显式放行以免将来改动误伤。
+        if (!upstream.ok && upstream.status !== 206) {
             return createResponse(`上游请求失败: ${upstream.status} ${upstream.statusText}`, upstream.status);
         }
         const ctypeRaw = upstream.headers.get('Content-Type') || '';
@@ -509,11 +531,16 @@ export async function onRequest(context) {
             const h = new Headers();
             if (ctypeRaw) h.set('Content-Type', ctypeRaw);
             const cl = upstream.headers.get('Content-Length'); if (cl) h.set('Content-Length', cl);
+            // 透传范围请求相关头，并保留上游真实状态码（206 必须原样返回，
+            // 否则浏览器认为服务器不支持范围请求：拖不动进度，Safari 更会直接拒绝播放 MP4）
+            const cr = upstream.headers.get('Content-Range'); if (cr) h.set('Content-Range', cr);
+            h.set('Accept-Ranges', upstream.headers.get('Accept-Ranges') || 'bytes');
             h.set('Cache-Control', `public, max-age=${CACHE_TTL}`);
             h.set('Access-Control-Allow-Origin', '*');
             h.set('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
             h.set('Access-Control-Allow-Headers', '*');
-            return new Response(upstream.body, { status: 200, headers: h });
+            h.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+            return new Response(upstream.body, { status: upstream.status === 206 ? 206 : 200, headers: h });
         }
 
         const content = await upstream.text();

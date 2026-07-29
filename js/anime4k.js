@@ -127,6 +127,16 @@
     let rafId = 0, rvfcHandle = 0, running = false;
     let videoEl = null, profile = PROFILES.a4k;
     let resizeObs = null;
+    // 画面校验：canvas 是不透明的(alpha:false)覆盖层，一旦"画不出东西"就会变成一块黑幕
+    // 盖住下面正常播放的视频——表现为「只有声音没画面」。Safari/iOS 上跨域的原生 <video>
+    // (直链 MP4，非 MSE blob) 取纹理可能**不抛异常但返回全黑**，正好绕过 catch 自愈。
+    // 因此：先渲染、抽样校验非黑，才允许显示；超时仍未验证通过则彻底关闭、露出原生视频。
+    let frameVerified = false;   // 是否已确认渲染出非黑画面
+    let verifyDeadline = 0;      // 看门狗截止时间戳
+    let watchdogId = 0;          // 独立看门狗定时器
+    let verifyFailures = 0;      // 连续校验失败次数（换视频元素时清零）
+    const VERIFY_TIMEOUT_MS = 1500;
+    const MAX_VERIFY_FAILURES = 2; // 连续失败到此次数后不再尝试，避免反复黑屏闪烁
     let strengthMult = 1.0; // 强度微调倍率（用户滑块）
     let outputHeight = 0, outputWidth = 0;
     let targetSetting = 'auto'; // 'auto'(<1440→1440) | 0(源) | 数字(目标高度)
@@ -271,6 +281,9 @@
             canvas.width = ow;
             canvas.height = oh;
             gl.viewport(0, 0, ow, oh);
+            // 尺寸变化会重置绘制缓冲为透明黑；显式清一次，避免残留黑块被当成有效画面
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
             outputHeight = oh;
             outputWidth = ow;
             // uTexel 基于源尺寸（mode 0/1）；uTexelOut 基于输出尺寸（mode 2 在放大后锐化）
@@ -297,7 +310,51 @@
         gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, denoiseTex, 0);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        // 关键：上面把 denoiseTex 绑到了当前纹理单元(0)，若不还原，本帧 pass1 就会
+        // **采样它正在写入的那张纹理**（读写同一纹理 = 反馈回路，结果未定义，实测常为黑帧）。
+        // 而 pass1 输出黑 → pass2 放大黑 → 整块不透明画布全黑盖住视频 = 「只有声音没画面」。
+        // 恢复成视频纹理，保证 pass1 采样的是刚上传的视频帧。
+        gl.bindTexture(gl.TEXTURE_2D, tex);
         fboW = sw; fboH = sh;
+    }
+
+    // 抽样读回若干像素，判断这一帧是否"画出了东西"（非全黑）。
+    // readPixels 在画布被跨域污染时会抛 SecurityError → 交由外层 catch 关闭增强。
+    function frameLooksBlack() {
+        const w = canvas.width, h = canvas.height;
+        if (!w || !h) return true;
+        const pts = [
+            [w >> 1, h >> 1],
+            [w >> 2, h >> 2],
+            [(w * 3) >> 2, (h * 3) >> 2],
+            [w >> 2, (h * 3) >> 2],
+            [(w * 3) >> 2, h >> 2],
+        ];
+        const px = new Uint8Array(4);
+        for (let i = 0; i < pts.length; i++) {
+            gl.readPixels(pts[i][0], pts[i][1], 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            // 任一采样点有明显亮度即认为正常（纯黑画面本身也可能是内容，但连续 1.5s
+            // 全部采样点全黑 → 判定为渲染失败，宁可关掉增强也不能黑屏）
+            if (px[0] > 8 || px[1] > 8 || px[2] > 8) return false;
+        }
+        return true;
+    }
+
+    // 校验这一帧；通过则显示 canvas，超时未通过则关闭增强露出原生视频。
+    function verifyFrame() {
+        if (frameVerified) return true;
+        if (!frameLooksBlack()) {
+            frameVerified = true;
+            verifyFailures = 0;
+            canvas.style.display = 'block'; // 确认有画面后才覆盖上去
+            return true;
+        }
+        if (verifyDeadline && Date.now() > verifyDeadline) {
+            console.warn('[Anime4K] 渲染结果持续为黑帧，已关闭增强以免遮挡视频');
+            verifyFailures++;
+            disable();
+        }
+        return false;
     }
 
     function renderFrame() {
@@ -338,6 +395,13 @@
                     gl.uniform1i(uMode, profile.mode | 0);
                     gl.drawArrays(gl.TRIANGLES, 0, 3);
                 }
+                if (!verifyFrame()) return;   // 未通过校验：不显示；已在超时时自行关闭
+            } else if (verifyDeadline && Date.now() > verifyDeadline) {
+                // 视频一直没进入可取帧状态（readyState<2 / videoWidth=0）：
+                // 说明增强用不上，关掉覆盖层，别让它挡着。
+                console.warn('[Anime4K] 视频始终不可取帧，已关闭增强');
+                disable();
+                return;
             }
         } catch (e) {
             console.warn('[Anime4K] 渲染失败，已关闭:', e && e.message);
@@ -365,6 +429,11 @@
     function enable(art, profileKey) {
         profile = PROFILES[profileKey] || PROFILES.a4k;
         if (!art || !art.video) return false;
+        // 换了视频元素/换集：重新给一次机会
+        if (videoEl !== art.video) verifyFailures = 0;
+        // 这个源上已经连续失败过：不再尝试，交由调用方回退（CSS 档或不增强），
+        // 否则每次 loadedmetadata/resize 都会再黑闪一次。
+        if (verifyFailures >= MAX_VERIFY_FAILURES) return false;
         try {
             if (!gl) initGL();
             if (running && videoEl === art.video) return true; // 已在运行
@@ -381,7 +450,22 @@
                 resizeObs.observe(parent || canvas);
             }
             running = true;
-            canvas.style.display = 'block';
+            // 关键：先不显示。等 renderFrame 校验出"确实画出了非黑画面"再显示，
+            // 避免任何渲染失败路径把不透明画布留在视频上造成「只有声音没画面」。
+            frameVerified = false;
+            canvas.style.display = 'none';
+            verifyDeadline = Date.now() + VERIFY_TIMEOUT_MS;
+            // 独立看门狗：requestVideoFrameCallback 有可能一次都不触发（Safari 在某些
+            // 情况下不再呈现帧），那样 renderFrame 里的超时判断根本没机会执行。
+            if (watchdogId) clearTimeout(watchdogId);
+            watchdogId = setTimeout(function () {
+                watchdogId = 0;
+                if (running && !frameVerified) {
+                    console.warn('[Anime4K] 超时未渲染出有效画面，已关闭增强');
+                    verifyFailures++;
+                    disable();
+                }
+            }, VERIFY_TIMEOUT_MS + 200);
             scheduleNext();
             return true;
         } catch (e) {
@@ -399,6 +483,9 @@
             try { videoEl.cancelVideoFrameCallback(rvfcHandle); } catch (e) {}
         }
         rvfcHandle = 0;
+        if (watchdogId) { clearTimeout(watchdogId); watchdogId = 0; }
+        frameVerified = false;
+        verifyDeadline = 0;
         if (canvas) canvas.style.display = 'none';
     }
 

@@ -45,6 +45,13 @@
 
     // 直连优先：与播放器一致直接取源站（CORS 由源站提供，能播即能下）；
     // 失败再回退代理。注意：边缘代理可能按文本处理而损坏二进制，故二进制必须直连优先。
+    //
+    // 取流策略记忆：源站没有 CORS 时，"先直连再回退代理"会让**每个分片**都白跑一次
+    // 必然失败的往返（整集耗时直接翻倍）。这里在首个分片探明结论后记住它，
+    // 之后所有分片直接用对的方式取，不再重复试错。每次下载任务开始时重置。
+    let segStrategy = 'unknown'; // 'unknown' | 'direct' | 'proxy'
+    function resetStrategy() { segStrategy = 'unknown'; }
+
     async function fetchText(absUrl, signal) {
         try {
             const r = await fetch(absUrl, { signal, mode: 'cors' });
@@ -55,13 +62,43 @@
         return r2.text();
     }
     async function fetchBuffer(absUrl, signal) {
-        try {
-            const r = await fetch(absUrl, { signal, mode: 'cors' });
-            if (r.ok) return await r.arrayBuffer();
-        } catch (e) { /* 回退代理 */ }
+        // 已知需要走代理：直接走，省掉注定失败的直连
+        if (segStrategy !== 'proxy') {
+            try {
+                const r = await fetch(absUrl, { signal, mode: 'cors' });
+                if (r.ok) {
+                    if (segStrategy === 'unknown') segStrategy = 'direct';
+                    return await r.arrayBuffer();
+                }
+            } catch (e) {
+                if (signal && signal.aborted) throw e; // 取消不算探测失败
+            }
+            if (segStrategy === 'unknown') segStrategy = 'proxy';
+        }
         const r2 = await fetch(proxied(absUrl), { signal });
         if (!r2.ok) throw new Error(`分片获取失败(HTTP ${r2.status})`);
         return r2.arrayBuffer();
+    }
+
+    // 并发抓取分片：保持**结果顺序严格等于 segments 顺序**（转封装/拼接依赖顺序），
+    // 但网络请求并发进行。onOne(index, arrayBuffer) 按**完成顺序**回调用于计数进度；
+    // 返回按索引对齐的结果数组。
+    const SEG_CONCURRENCY = 6;
+    async function fetchAllSegments(urls, signal, onDone) {
+        const out = new Array(urls.length);
+        let next = 0, done = 0;
+        const workers = new Array(Math.min(SEG_CONCURRENCY, urls.length)).fill(0).map(async () => {
+            for (;;) {
+                if (signal.aborted) throw new Error('已取消');
+                const i = next++;
+                if (i >= urls.length) return;
+                out[i] = await fetchBuffer(urls[i], signal);
+                done++;
+                if (onDone) onDone(done);
+            }
+        });
+        await Promise.all(workers);
+        return out;
     }
 
     // 解析媒体播放列表，返回 { segments:[abs], key, mapAbs, mediaSeq }
@@ -171,6 +208,7 @@
     // 下载单集。preferTs=true 时直接保存原始 TS（必定完整、低内存）；
     // 否则用 mux.js 无损转封装为 MP4。返回实际格式 'mp4' | 'ts'。
     async function downloadOne(m3u8, filename, signal, preferTs) {
+        resetStrategy(); // 每集重新探测取流方式（不同集可能来自不同 host）
         // 1) 取播放列表（可能是 master）
         let baseAbs = m3u8;
         let text = await fetchText(baseAbs, signal);
@@ -226,12 +264,12 @@
         // —— 情况 A：源已是 fMP4 分片（含 EXT-X-MAP）→ 直接拼接为 .mp4 ——
         if (mapAbs) {
             const parts = [new Uint8Array(await fetchBuffer(mapAbs, signal))];
+            const bufs = await fetchAllSegments(segments, signal, (d) => setProgress(d, total));
             for (let i = 0; i < total; i++) {
-                if (signal.aborted) throw new Error('已取消');
-                let buf = await fetchBuffer(segments[i], signal);
+                let buf = bufs[i];
                 if (cryptoKey) buf = (await decryptSeg(buf, cryptoKey, explicitIv || seqToIv(mediaSeq + i))).buffer;
                 parts.push(new Uint8Array(buf));
-                setProgress(i + 1, total);
+                bufs[i] = null; // 及时释放，降低峰值内存
             }
             saveBlob(parts, 'video/mp4', filename + '.mp4');
             return 'mp4';
@@ -255,13 +293,14 @@
                 if (seg.data) dataParts.push(new Uint8Array(seg.data));
             });
 
+            // 并发下载，但严格按原顺序 push（时间轴依赖顺序）
+            const bufs = await fetchAllSegments(segments, signal, (d) => setProgress(d, total));
             for (let i = 0; i < total; i++) {
-                if (signal.aborted) throw new Error('已取消');
-                let buf = await fetchBuffer(segments[i], signal);
+                let buf = bufs[i];
                 if (cryptoKey) buf = (await decryptSeg(buf, cryptoKey, explicitIv || seqToIv(mediaSeq + i))).buffer;
                 transmuxer.push(new Uint8Array(buf));
                 buf = null;
-                setProgress(i + 1, total);
+                bufs[i] = null;
             }
             if (ui) ui.text.textContent = '封装 MP4 中…';
             transmuxer.flush(); // 仅此一次：生成连续时间轴的 fMP4
@@ -276,12 +315,12 @@
 
         // —— 保存为原始 TS（用户主动选 TS，或转封装不可用/无输出时回退）——
         const parts = [];
+        const tsBufs = await fetchAllSegments(segments, signal, (d) => setProgress(d, total));
         for (let i = 0; i < total; i++) {
-            if (signal.aborted) throw new Error('已取消');
-            let buf = await fetchBuffer(segments[i], signal);
+            let buf = tsBufs[i];
             if (cryptoKey) buf = (await decryptSeg(buf, cryptoKey, explicitIv || seqToIv(mediaSeq + i))).buffer;
             parts.push(new Uint8Array(buf));
-            setProgress(i + 1, total);
+            tsBufs[i] = null;
         }
         saveBlob(parts, 'video/mp2t', filename + '.ts');
         if (!preferTs) console.warn('[Downloader] 回退 TS 原因:', muxErr || '未知');

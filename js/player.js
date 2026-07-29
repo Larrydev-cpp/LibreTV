@@ -425,6 +425,7 @@ function initPlayer(videoUrl) {
         art.destroy();
         art = null;
     }
+    codecWarned = false; // 换集/换源：重新判定解码能力
 
     // 配置HLS.js选项
     const hlsConfig = {
@@ -771,6 +772,7 @@ function initPlayer(videoUrl) {
                 art.play();
             });
         }
+        checkVideoTrackDecodable(art);
     });
 
     // 10秒后如果仍在加载，但不立即显示错误
@@ -789,6 +791,33 @@ function initPlayer(videoUrl) {
             `;
         }
     }, 10000);
+}
+
+// 检测「有声音但没画面」：音频在放、时间在走，但一帧视频都没解出来。
+// 常见于 Safari 遇到 H.265/HEVC(hev1 标签) 或 10-bit 编码的 MP4——音频轨(AAC)能解，
+// 视频轨解不了，用户看到的就是纯黑 + 有声。不给提示的话完全无从判断。
+// 只提示一次，且仅在确实有视频轨(videoWidth>0)时才判定。
+let codecWarned = false;
+function checkVideoTrackDecodable(art) {
+    if (codecWarned || !art || !art.video) return;
+    const v = art.video;
+    if (typeof v.getVideoPlaybackQuality !== 'function') return; // 不支持则不猜
+    const t0 = v.currentTime;
+    setTimeout(function () {
+        if (codecWarned || !art || !art.video) return;
+        const vv = art.video;
+        if (vv.paused || vv.currentTime <= t0) return;   // 没在推进，另有原因(缓冲/暂停)
+        if (!vv.videoWidth) return;                      // 没有视频轨(纯音频)，不算异常
+        let q = null;
+        try { q = vv.getVideoPlaybackQuality(); } catch (e) { return; }
+        // 播了 2.5 秒、时间在走，却一帧都没解码出来 → 视频轨无法解码
+        if (q && q.totalVideoFrames === 0) {
+            codecWarned = true;
+            if (typeof showToast === 'function') {
+                showToast('该视频的编码（可能是 H.265/HEVC）当前浏览器无法解码，只有声音。请切换其他播放源', 'warning');
+            }
+        }
+    }, 2500);
 }
 
 // 自定义M3U8 Loader用于过滤广告
