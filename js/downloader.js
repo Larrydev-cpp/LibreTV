@@ -81,24 +81,47 @@
     }
 
     // 并发抓取分片：保持**结果顺序严格等于 segments 顺序**（转封装/拼接依赖顺序），
-    // 但网络请求并发进行。onOne(index, arrayBuffer) 按**完成顺序**回调用于计数进度；
-    // 返回按索引对齐的结果数组。
+    // 但网络请求并发进行，且**同时最多只留 WINDOW 个分片在内存里**。
+    //
+    // 早先的实现是"先并发下载全部、再统一处理"，等于把整集（可能数 GB）全压在内存里，
+    // 移动端极易内存耗尽导致失败或产出损坏文件。这里改成有界滑动窗口：
+    // 窗口内并发下载，但**严格按下标顺序消费**（转封装/拼接依赖顺序），消费完立即释放。
     const SEG_CONCURRENCY = 6;
-    async function fetchAllSegments(urls, signal, onDone) {
-        const out = new Array(urls.length);
-        let next = 0, done = 0;
-        const workers = new Array(Math.min(SEG_CONCURRENCY, urls.length)).fill(0).map(async () => {
-            for (;;) {
-                if (signal.aborted) throw new Error('已取消');
-                const i = next++;
-                if (i >= urls.length) return;
-                out[i] = await fetchBuffer(urls[i], signal);
-                done++;
-                if (onDone) onDone(done);
+    const SEG_WINDOW = 8;
+    // onChunk(arrayBuffer, index) 按序调用；可返回 Promise（会被 await）。
+    async function streamSegments(urls, signal, onChunk, onProgress, startIndex, preloaded) {
+        const inflight = new Map();
+        let nextToStart = startIndex || 0;
+        let nextToConsume = startIndex || 0;
+
+        function fill() {
+            while (inflight.size < SEG_WINDOW && nextToStart < urls.length) {
+                const i = nextToStart++;
+                const p = fetchBuffer(urls[i], signal);
+                p.catch(function () {}); // 防止"未处理的拒绝"告警；await 时仍会正常抛出
+                inflight.set(i, p);
             }
-        });
-        await Promise.all(workers);
-        return out;
+        }
+
+        // 已预取的首片（用于编码探测）直接消费，避免重复下载
+        if (preloaded !== undefined && preloaded !== null) {
+            await onChunk(preloaded, nextToConsume);
+            nextToConsume++;
+            nextToStart = Math.max(nextToStart, nextToConsume);
+            if (onProgress) onProgress(nextToConsume, urls.length);
+        }
+
+        fill();
+        while (nextToConsume < urls.length) {
+            if (signal.aborted) throw new Error('已取消');
+            const p = inflight.get(nextToConsume);
+            const buf = await p;
+            inflight.delete(nextToConsume);
+            await onChunk(buf, nextToConsume);
+            nextToConsume++;
+            if (onProgress) onProgress(nextToConsume, urls.length);
+            fill(); // 补满窗口，保持并发
+        }
     }
 
     // 解析媒体播放列表，返回 { segments:[abs], key, mapAbs, mediaSeq }
@@ -126,6 +149,84 @@
             }
         }
         return { segments, key, mapAbs, mediaSeq };
+    }
+
+    // ===== TS 编码探测（决定能不能用 mux.js 转封装）=====
+    // mux.js 只实现了 H.264(avc1) + AAC(mp4a)，**完全不认识 H.265/HEVC**。
+    // 拿 HEVC 去转封装，它往往能吐出一个结构合法、视频轨却无效的 MP4：
+    // 音频能放、画面全白——这正是用户看到的现象。所以必须先探测真实编码再决定路线。
+    //
+    // 按 MPEG-TS 规范解析：188 字节一包、同步字节 0x47；
+    // PID 0 → PAT 拿到 program_map_PID；该 PID → PMT 遍历 elementary stream 的 stream_type。
+    const TS_PKT = 188;
+    const STREAM_TYPES = {
+        0x01: 'mpeg1v', 0x02: 'mpeg2v', 0x1B: 'h264', 0x24: 'hevc', 0x52: 'chinese-cast',
+        0x03: 'mp2a', 0x04: 'mp2a', 0x0F: 'aac', 0x11: 'aac-latm', 0x81: 'ac3', 0x87: 'eac3',
+    };
+    const VIDEO_TYPES = { 0x01: 1, 0x02: 1, 0x1B: 1, 0x24: 1 };
+
+    function detectTsCodecs(buf) {
+        const b = new Uint8Array(buf);
+        const out = { video: 'unknown', audio: 'unknown' };
+        // 找到第一个同步字节对齐的偏移（有些分片前面带垃圾字节）。
+        // 有下一个包时用"双同步"确认以避开偶然的 0x47；只剩最后一个包时接受单同步，
+        // 否则很短的缓冲区会直接判定失败（进而白白放弃转封装）。
+        let base = -1;
+        for (let i = 0; i + TS_PKT <= b.length && i < 4096; i++) {
+            if (b[i] !== 0x47) continue;
+            if (i + TS_PKT * 2 <= b.length && b[i + TS_PKT] !== 0x47) continue;
+            base = i; break;
+        }
+        if (base < 0) return out;
+
+        let pmtPid = -1;
+        for (let off = base; off + TS_PKT <= b.length; off += TS_PKT) {
+            if (b[off] !== 0x47) break;
+            const pid = ((b[off + 1] & 0x1f) << 8) | b[off + 2];
+            const payloadStart = (b[off + 1] & 0x40) !== 0;
+            const adaptation = (b[off + 3] >> 4) & 0x03; // 2bit: 1=仅载荷 2=仅调整 3=both
+            if (adaptation === 0 || adaptation === 2) continue; // 无载荷
+            let p = off + 4;
+            if (adaptation === 3) p += 1 + b[p];            // 跳过 adaptation_field
+            if (payloadStart) p += 1 + b[p];                // 跳过 pointer_field
+            if (p >= off + TS_PKT) continue;
+
+            if (pid === 0 && pmtPid < 0) {
+                // PAT：section_length 后是若干 (program_number, PID) 4 字节组
+                const sectionLen = ((b[p + 1] & 0x0f) << 8) | b[p + 2];
+                const end = Math.min(p + 3 + sectionLen - 4, off + TS_PKT); // 去掉 CRC32
+                for (let q = p + 8; q + 3 < end; q += 4) {
+                    const prog = (b[q] << 8) | b[q + 1];
+                    const pidv = ((b[q + 2] & 0x1f) << 8) | b[q + 3];
+                    if (prog !== 0) { pmtPid = pidv; break; }   // 跳过 NIT(program 0)
+                }
+                continue;
+            }
+            if (pmtPid >= 0 && pid === pmtPid) {
+                const sectionLen = ((b[p + 1] & 0x0f) << 8) | b[p + 2];
+                const end = Math.min(p + 3 + sectionLen - 4, off + TS_PKT);
+                const programInfoLen = ((b[p + 10] & 0x0f) << 8) | b[p + 11];
+                let q = p + 12 + programInfoLen;
+                while (q + 4 < end) {
+                    const stype = b[q];
+                    const esInfoLen = ((b[q + 3] & 0x0f) << 8) | b[q + 4];
+                    const name = STREAM_TYPES[stype];
+                    if (VIDEO_TYPES[stype]) {
+                        if (out.video === 'unknown') out.video = name || ('0x' + stype.toString(16));
+                    } else if (name && out.audio === 'unknown') {
+                        out.audio = name;
+                    }
+                    q += 5 + esInfoLen;
+                }
+                if (out.video !== 'unknown') return out;       // 拿到视频轨即可
+            }
+        }
+        return out;
+    }
+
+    // mux.js 能处理的组合：视频必须是 H.264
+    function canTransmux(codecs) {
+        return !!codecs && codecs.video === 'h264';
     }
 
     function hexToBytes(hex) {
@@ -260,25 +361,38 @@
         }
 
         const total = segments.length;
+        const decrypt = async function (buf, i) {
+            if (!cryptoKey) return buf;
+            return (await decryptSeg(buf, cryptoKey, explicitIv || seqToIv(mediaSeq + i))).buffer;
+        };
+        const prog = (done) => setProgress(done, total);
 
         // —— 情况 A：源已是 fMP4 分片（含 EXT-X-MAP）→ 直接拼接为 .mp4 ——
         if (mapAbs) {
             const parts = [new Uint8Array(await fetchBuffer(mapAbs, signal))];
-            const bufs = await fetchAllSegments(segments, signal, (d) => setProgress(d, total));
-            for (let i = 0; i < total; i++) {
-                let buf = bufs[i];
-                if (cryptoKey) buf = (await decryptSeg(buf, cryptoKey, explicitIv || seqToIv(mediaSeq + i))).buffer;
-                parts.push(new Uint8Array(buf));
-                bufs[i] = null; // 及时释放，降低峰值内存
-            }
+            await streamSegments(segments, signal, async function (buf, i) {
+                parts.push(new Uint8Array(await decrypt(buf, i)));
+            }, prog);
             saveBlob(parts, 'video/mp4', filename + '.mp4');
             return 'mp4';
         }
 
-        // —— 情况 B：TS 分片 → 用 mux.js 无损转封装为 MP4（不重新编码）——
-        // preferTs 时跳过转封装，直接保存原始 TS
+        // —— 情况 B：TS 分片 ——
+        // 先探测首片的真实编码再决定路线：mux.js 只实现了 H.264(avc1)+AAC，
+        // **不认识 H.265/HEVC**。硬喂 HEVC 时它常常能吐出一个结构合法、视频轨却无效的
+        // MP4——音频正常、画面全白，还会提示"下载完成"。所以非 H.264 一律不转封装，
+        // 直接保存原始 TS（无损保留原编码，VLC / Infuse 等都能播）。
+        let firstBuf = await fetchBuffer(segments[0], signal);
+        firstBuf = await decrypt(firstBuf, 0);
+        const codecs = detectTsCodecs(firstBuf);
+
         let muxjs = null, muxErr = '';
-        if (!preferTs) {
+        const codecOk = canTransmux(codecs);
+        if (!preferTs && !codecOk) {
+            muxErr = '片源编码为 ' + (codecs.video === 'unknown' ? '未知' : codecs.video.toUpperCase()) +
+                     '，mux.js 只支持 H.264，跳过转封装';
+        }
+        if (!preferTs && codecOk) {
             try { muxjs = await loadMux(); } catch (e) { muxjs = null; muxErr = (e && e.message) || '加载失败'; }
         }
 
@@ -293,38 +407,51 @@
                 if (seg.data) dataParts.push(new Uint8Array(seg.data));
             });
 
-            // 并发下载，但严格按原顺序 push（时间轴依赖顺序）
-            const bufs = await fetchAllSegments(segments, signal, (d) => setProgress(d, total));
-            for (let i = 0; i < total; i++) {
-                let buf = bufs[i];
-                if (cryptoKey) buf = (await decryptSeg(buf, cryptoKey, explicitIv || seqToIv(mediaSeq + i))).buffer;
-                transmuxer.push(new Uint8Array(buf));
-                buf = null;
-                bufs[i] = null;
-            }
+            // 有界窗口并发下载，但严格按原顺序 push（时间轴依赖顺序）
+            await streamSegments(segments, signal, async function (buf, i) {
+                transmuxer.push(new Uint8Array(await decrypt(buf, i)));
+            }, prog, 0, firstBuf);
+            firstBuf = null;
             if (ui) ui.text.textContent = '封装 MP4 中…';
             transmuxer.flush(); // 仅此一次：生成连续时间轴的 fMP4
 
-            if (initSeg && dataParts.length) {
+            // 双保险：即便探测判为 H.264，也要确认输出里真有 avc1 视频样本条目，
+            // 否则同样会得到一个"能放声音、画面全白"的坏 MP4。
+            if (initSeg && dataParts.length && initHasAvc1(initSeg)) {
                 saveBlob([initSeg, ...dataParts], 'video/mp4', filename + '.mp4');
                 return 'mp4';
             }
-            muxErr = '转封装无输出(可能非标准 H.264/AAC)';
-            // 转封装无输出 → 回退 TS
+            muxErr = initSeg && dataParts.length
+                ? '转封装输出中没有有效的 H.264 视频轨'
+                : '转封装无输出(可能非标准 H.264/AAC)';
+            // 转封装结果不可用 → 回退 TS（下面会重新按序抓一遍）
+            firstBuf = await fetchBuffer(segments[0], signal);
+            firstBuf = await decrypt(firstBuf, 0);
         }
 
-        // —— 保存为原始 TS（用户主动选 TS，或转封装不可用/无输出时回退）——
+        // —— 保存为原始 TS（用户主动选 TS，或不能/不该转封装时回退）——
         const parts = [];
-        const tsBufs = await fetchAllSegments(segments, signal, (d) => setProgress(d, total));
-        for (let i = 0; i < total; i++) {
-            let buf = tsBufs[i];
-            if (cryptoKey) buf = (await decryptSeg(buf, cryptoKey, explicitIv || seqToIv(mediaSeq + i))).buffer;
-            parts.push(new Uint8Array(buf));
-            tsBufs[i] = null;
-        }
+        await streamSegments(segments, signal, async function (buf, i) {
+            parts.push(new Uint8Array(await decrypt(buf, i)));
+        }, prog, 0, firstBuf);
+        firstBuf = null;
         saveBlob(parts, 'video/mp2t', filename + '.ts');
-        if (!preferTs) console.warn('[Downloader] 回退 TS 原因:', muxErr || '未知');
+        if (!preferTs) {
+            console.warn('[Downloader] 回退 TS 原因:', muxErr || '未知');
+            lastTsReason = muxErr || '';
+        }
         return 'ts';
+    }
+    // 最近一次回退到 TS 的原因（供 start() 给用户一句人话解释）
+    let lastTsReason = '';
+
+    // 转封装输出的 initSegment 里必须含 'avc1' 样本条目，否则视频轨无效
+    function initHasAvc1(initSeg) {
+        const b = initSeg;
+        for (let i = 0; i + 3 < b.length; i++) {
+            if (b[i] === 0x61 && b[i + 1] === 0x76 && b[i + 2] === 0x63 && b[i + 3] === 0x31) return true; // 'avc1'
+        }
+        return false;
     }
 
     let busy = false;
@@ -346,9 +473,17 @@
         showProgress();
         try {
             const fmt = await downloadOne(m3u8, currentTitle(), signal, preferTs);
-            global.showToast && global.showToast(
-                `下载完成（${(fmt || 'mp4').toUpperCase()}）${fmt === 'ts' ? '，可用 VLC/Infuse 播放' : ''}`,
-                'success');
+            if (fmt === 'ts' && !preferTs && /H(EVC|265)|未知|没有有效/i.test(lastTsReason)) {
+                // 说清楚为什么不是 MP4——否则用户只会看到一个"奇怪的 .ts"，
+                // 或者（改之前）一个能出声但画面全白的 MP4。
+                global.showToast && global.showToast(
+                    '此片源为 H.265/HEVC 编码，网页内无法无损转成 MP4（强转会画面全白），已保存为原始 TS，可用 VLC / Infuse / 手机播放器直接播放',
+                    'warning');
+            } else {
+                global.showToast && global.showToast(
+                    `下载完成（${(fmt || 'mp4').toUpperCase()}）${fmt === 'ts' ? '，可用 VLC/Infuse 播放' : ''}`,
+                    'success');
+            }
         } catch (e) {
             if (!signal.aborted) {
                 console.warn('[Downloader]', e);
