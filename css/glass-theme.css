@@ -9,6 +9,10 @@
 :root {
     /* —— 休闲海滩🏖️配色：暖象牙白 + 热带海水青 + 暖阳沙 —— */
     --primary-color: #1fb3c4;        /* 热带海水青（主色）*/
+    --primary-rgb: 31, 179, 196;     /* 主色 RGB 通道：供 rgba(var(--primary-rgb), a) 派生半透明色 */
+    --accent-rgb: 242, 166, 90;      /* 点缀色 RGB 通道 */
+    --shadow-rgb: 35, 95, 105;       /* 彩色投影 RGB 通道 */
+    --overlay-bg: rgba(206, 230, 226, 0.45); /* 弹窗遮罩 */
     --primary-light: #5fcdd9;        /* 浅海泡沫青 */
     --secondary-color: #fdfaf3;      /* 暖象牙白 */
     --accent-color: #f2a65a;         /* 暖阳沙（点缀）*/
@@ -19,15 +23,15 @@
     --page-gradient-end: #d6eef0;    /* 底部浅海蓝绿 */
     --card-gradient-start: #fffefb;
     --card-gradient-end: #ecf8f7;
-    --card-accent: rgba(31, 179, 196, 0.10);
-    --card-hover-border: rgba(31, 179, 196, 0.45);
+    --card-accent: rgba(var(--primary-rgb), 0.10);
+    --card-hover-border: rgba(var(--primary-rgb), 0.45);
 
     /* —— 液态玻璃变量：磨砂(填充)≤15%，主要靠强模糊透出背景，而非糊一层厚磨砂 —— */
     --glass-bg: rgba(255, 254, 250, 0.10);       /* 玻璃主体（高度通透）*/
     --glass-bg-strong: rgba(255, 254, 250, 0.15); /* 弹窗/面板（最多 15% 磨砂）*/
     --glass-bg-soft: rgba(231, 245, 244, 0.08);  /* 内嵌块（更淡）*/
     --glass-border: rgba(60, 110, 110, 0.18);    /* 可见的浅色描边 */
-    --glass-border-strong: rgba(31, 179, 196, 0.55);
+    --glass-border-strong: rgba(var(--primary-rgb), 0.55);
     /* 小尺寸药丸标签（最近搜索/豆瓣标签）：需在浅色海景背景上清晰可见，
        故比 ≤15% 的大面板填充更实一些，靠较高白磨砂 + 描边读出"底" */
     /* 小药丸（最近搜索/豆瓣标签）的底色：顶部页面背景是近白的暖象牙(#fdfcf6)，
@@ -37,12 +41,12 @@
     /* 搜索记录用更「薄」的毛玻璃：填充极低(≤16%)、靠强模糊透出背景，不糊厚磨砂、不挡下面；
        浅象牙底上的「底片感」由青色描边 + 柔投影承担。 */
     --chip-glass: rgba(234, 248, 248, 0.16);
-    --chip-glass-hover: rgba(31, 179, 196, 0.16);
+    --chip-glass-hover: rgba(var(--primary-rgb), 0.16);
     --glass-highlight: rgba(255, 255, 255, 0.85); /* 顶部高光 */
     --glass-blur: 24px;                           /* 加大模糊补足玻璃质感 */
     --glass-blur-strong: 38px;
     /* 分层"漂浮玻璃"：彩色投影 + 亮顶高光 + 内白玻璃缘 */
-    --glass-shadow: 0 10px 30px rgba(35, 95, 105, 0.18), 0 2px 8px rgba(35, 95, 105, 0.10), inset 0 1px 0 var(--glass-highlight), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    --glass-shadow: 0 10px 30px rgba(var(--shadow-rgb), 0.18), 0 2px 8px rgba(var(--shadow-rgb), 0.10), inset 0 1px 0 var(--glass-highlight), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 
     /* —— 统一圆角令牌 —— */
     --radius-sm: 10px;
@@ -64,10 +68,10 @@
     pointer-events: none;
     z-index: -1;
     background:
-        radial-gradient(30vw 18vw at 44% 4%, rgba(31, 179, 196, 0.22), transparent 60%),    /* logo 后青晕：给玻璃可虚化的底色 */
-        radial-gradient(24vw 16vw at 60% 7%, rgba(242, 166, 90, 0.16), transparent 60%),     /* logo 后暖晕：玻璃里冷暖交融 */
-        radial-gradient(95vw 55vw at 50% 120%, rgba(31, 179, 196, 0.24), transparent 64%),   /* 底部海水 */
-        radial-gradient(52vw 52vw at 88% -12%, rgba(242, 166, 90, 0.20), transparent 60%);   /* 右上暖阳 */
+        radial-gradient(30vw 18vw at 44% 4%, rgba(var(--primary-rgb), 0.22), transparent 60%),    /* logo 后青晕：给玻璃可虚化的底色 */
+        radial-gradient(24vw 16vw at 60% 7%, rgba(var(--accent-rgb), 0.16), transparent 60%),     /* logo 后暖晕：玻璃里冷暖交融 */
+        radial-gradient(95vw 55vw at 50% 120%, rgba(var(--primary-rgb), 0.24), transparent 64%),   /* 底部海水 */
+        radial-gradient(52vw 52vw at 88% -12%, rgba(var(--accent-rgb), 0.20), transparent 60%);   /* 右上暖阳 */
 }
 /* 背景椰子树🌴：固定右下、低透明、置于内容之后 */
 .bg-palm {
@@ -121,7 +125,7 @@ body.page-bg { color: var(--text-color); }
 
 /* 浏览页弹窗遮罩：海雾蓝而非纯黑 */
 .page-bg #modal, .page-bg #passwordModal {
-    background: rgba(206, 230, 226, 0.45) !important;
+    background: var(--overlay-bg) !important;
     -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
 }
@@ -281,7 +285,7 @@ body.player-active #settingsPanel {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.08) 100%);
     -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(200%);
     backdrop-filter: blur(var(--glass-blur-strong)) saturate(200%);
-    border: 1px solid rgba(120, 180, 185, 0.45);
+    border: 1px solid var(--glass-border-strong);
     box-shadow: var(--glass-shadow);
 }
 /* 高对比主题：保持黑底实色徽标 + 灰边，不要浅色玻璃 */
@@ -396,7 +400,7 @@ html[data-theme="contrast"] .page-bg .logo-glass {
     border: 1px solid var(--glass-border) !important;
     -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(195%) brightness(1.05);
     backdrop-filter: blur(var(--glass-blur-strong)) saturate(195%) brightness(1.05);
-    box-shadow: 0 24px 56px rgba(60, 120, 115, 0.28),
+    box-shadow: 0 24px 56px rgba(var(--shadow-rgb), 0.28),
                 inset 0 1px 0 var(--glass-highlight) !important;
 }
 /* 弹窗遮罩：海雾蓝（亮色主题，见上方统一定义）*/
@@ -426,9 +430,9 @@ html[data-theme="contrast"] .page-bg .logo-glass {
  * ========================================================== */
 .page-bg button.bg-gradient-to-r {
     /* 覆盖 Tailwind 的 indigo→purple→pink，改为海蓝渐变 */
-    background-image: linear-gradient(135deg, #1fb3c4, #5fcdd9) !important;
+    background-image: linear-gradient(135deg, var(--primary-color), var(--primary-light)) !important;
     border-radius: var(--radius-md) !important;
-    box-shadow: 0 6px 16px rgba(60, 120, 115, 0.20),
+    box-shadow: 0 6px 16px rgba(var(--shadow-rgb), 0.20),
                 inset 0 1px 0 var(--glass-highlight);
     position: relative;
     overflow: hidden;
@@ -539,7 +543,7 @@ html[data-theme="contrast"] .page-bg .logo-glass {
     border: 1px solid var(--glass-border-strong);
     transition: all 0.2s ease;
 }
-.wp-link:hover { background: rgba(31, 179, 196, 0.14); }
+.wp-link:hover { background: rgba(var(--primary-rgb), 0.14); }
 .wp-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .wp-chip {
     display: inline-flex;
@@ -579,15 +583,15 @@ html[data-theme="contrast"] .page-bg .logo-glass {
 /* 增强态：柔和青瓷描边，区别于源画质 */
 .lt-quality-badge.is-enhanced {
     color: #e8f3f1;
-    border-color: rgba(31, 179, 196, 0.60);
-    background: linear-gradient(135deg, rgba(31, 179, 196, 0.42), rgba(91, 188, 217, 0.42));
+    border-color: rgba(var(--primary-rgb), 0.60);
+    background: linear-gradient(135deg, rgba(var(--primary-rgb), 0.42), rgba(91, 188, 217, 0.42));
 }
 /* 4K / 8K 用暖陶土点缀高亮 */
 .lt-quality-badge.is-uhd {
     color: #fff;
     border-color: var(--accent-color);
-    background: linear-gradient(135deg, rgba(242, 166, 90, 0.65), rgba(31, 179, 196, 0.55));
-    box-shadow: 0 2px 9px rgba(242, 166, 90, 0.30);
+    background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.65), rgba(var(--primary-rgb), 0.55));
+    box-shadow: 0 2px 9px rgba(var(--accent-rgb), 0.30);
 }
 @media (max-width: 640px) {
     .lt-quality-badge { top: 6px; right: 6px; font-size: 0.66rem; padding: 1px 6px; }
@@ -603,7 +607,7 @@ html[data-theme="contrast"] .page-bg .logo-glass {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(206, 230, 226, 0.45);
+    background: var(--overlay-bg);
     -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
 }
@@ -641,10 +645,10 @@ html[data-theme="contrast"] .page-bg .logo-glass {
     color: #fff;
     border-radius: var(--radius-pill);
     border: 1px solid var(--glass-border-strong);
-    background: rgba(31, 179, 196, 0.14);
+    background: rgba(var(--primary-rgb), 0.14);
     transition: all 0.2s ease;
 }
-.lt-dl-cancel:hover { background: rgba(242, 166, 90, 0.20); border-color: var(--accent-color); }
+.lt-dl-cancel:hover { background: rgba(var(--accent-rgb), 0.20); border-color: var(--accent-color); }
 
 /* ============================================================
  * 增强强度滑块面板
@@ -750,10 +754,10 @@ body.page-bg {
 .page-bg .hover\:text-pink-400:hover { color: #5cbf86 !important; }
 .page-bg .border-pink-500, .page-bg .border-pink-600 { border-color: #38ab66 !important; }
 /* 结果卡片类型/年份标签：蓝/紫 → 青(类型)/沙(年份) 淡色 pill */
-.page-bg .bg-blue-500 { background-color: rgba(31, 179, 196, 0.16) !important; }
-.page-bg .text-blue-300 { color: #1391a0 !important; }
-.page-bg .bg-purple-500 { background-color: rgba(242, 166, 90, 0.18) !important; }
-.page-bg .text-purple-300 { color: #b06f2e !important; }
+.page-bg .bg-blue-500 { background-color: rgba(var(--primary-rgb), 0.16) !important; }
+.page-bg .text-blue-300 { color: var(--tag-type-text, #1391a0) !important; }
+.page-bg .bg-purple-500 { background-color: rgba(var(--accent-rgb), 0.18) !important; }
+.page-bg .text-purple-300 { color: var(--tag-year-text, #b06f2e) !important; }
 
 /* 4) 间距与节奏：搜索结果更舒展 */
 .page-bg #results { gap: 1.1rem !important; }
@@ -784,7 +788,11 @@ body.page-bg {
 html[data-theme="contrast"] {
     --primary-color: #ffd60a;        /* 高对比黄（主交互）*/
     --primary-light: #ffe34d;
+    --primary-rgb: 255, 214, 10;
     --accent-color: #4fd0ff;         /* 高对比青 */
+    --accent-rgb: 79, 208, 255;
+    --shadow-rgb: 0, 0, 0;
+    --overlay-bg: rgba(0, 0, 0, 0.82);
     --text-color: #ffffff;
     --text-muted: #e6e6e6;
     --border-color: #ffffff;
@@ -860,3 +868,180 @@ html[data-theme="contrast"] .page-bg input:focus-visible {
     outline: 3px solid #ffd60a !important;
     outline-offset: 2px;
 }
+
+/* ============================================================
+ * 更多主题：深夜影院(midnight) / 樱花(sakura) / 森林(forest)
+ * 均复用上方的玻璃组件，只换色板令牌（--primary-rgb 等），
+ * 因此新增主题只需一组变量 + 少量文字色修正。
+ * ========================================================== */
+
+/* —— 深夜影院：深靛蓝夜空 + 紫罗兰主色 + 琥珀点缀，深色玻璃，护眼观影 —— */
+html[data-theme="midnight"] {
+    color-scheme: dark;
+    --primary-color: #8b7cf6;
+    --primary-light: #b3a8ff;
+    --primary-rgb: 139, 124, 246;
+    --secondary-color: #0f1226;
+    --accent-color: #f5b95c;
+    --accent-rgb: 245, 185, 92;
+    --shadow-rgb: 4, 6, 20;
+    --text-color: #e7e9f5;
+    --text-muted: #9aa0c0;
+    --border-color: rgba(160, 170, 230, 0.18);
+    --page-gradient-start: #0c0f22;
+    --page-gradient-end: #161a38;
+    --card-gradient-start: #151936;
+    --card-gradient-end: #10132a;
+    --glass-bg: rgba(30, 34, 70, 0.38);
+    --glass-bg-strong: rgba(22, 26, 56, 0.72);
+    --glass-bg-soft: rgba(60, 66, 120, 0.22);
+    --glass-border: rgba(160, 170, 240, 0.20);
+    --chip-bg: rgba(52, 58, 110, 0.85);
+    --chip-bg-hover: rgba(72, 78, 140, 0.92);
+    --chip-glass: rgba(60, 66, 120, 0.30);
+    --glass-highlight: rgba(255, 255, 255, 0.10);
+    --glass-shadow: 0 10px 30px rgba(4, 6, 20, 0.55), 0 2px 8px rgba(4, 6, 20, 0.35), inset 0 1px 0 var(--glass-highlight), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    --overlay-bg: rgba(6, 8, 20, 0.70);
+    --tag-type-text: #c4bcff;
+    --tag-year-text: #f5c77e;
+}
+html[data-theme="midnight"] .page-bg .text-white { color: #f1f2fb !important; }
+html[data-theme="midnight"] .page-bg .text-gray-200 { color: #dfe2f2 !important; }
+html[data-theme="midnight"] .page-bg .text-gray-300 { color: #c3c7e0 !important; }
+html[data-theme="midnight"] .page-bg .text-gray-400 { color: #9aa0c0 !important; }
+html[data-theme="midnight"] .page-bg .text-gray-500 { color: #7d83a6 !important; }
+html[data-theme="midnight"] .page-bg .bg-palm { opacity: 0.07; }
+html[data-theme="midnight"] .page-bg .logo-glass {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+
+/* —— 樱花：奶白粉底 + 樱粉主色 + 抹茶点缀 —— */
+html[data-theme="sakura"] {
+    --primary-color: #e0679a;
+    --primary-light: #f296bb;
+    --primary-rgb: 224, 103, 154;
+    --secondary-color: #fff8fa;
+    --accent-color: #7cb66b;
+    --accent-rgb: 124, 182, 107;
+    --shadow-rgb: 140, 60, 95;
+    --text-color: #4a3540;
+    --text-muted: #8a6f7c;
+    --border-color: rgba(150, 80, 110, 0.16);
+    --page-gradient-start: #fffafb;
+    --page-gradient-end: #fbe1ea;
+    --card-gradient-start: #fffdfd;
+    --card-gradient-end: #fcecf2;
+    --glass-bg: rgba(255, 250, 252, 0.12);
+    --glass-bg-strong: rgba(255, 250, 252, 0.18);
+    --glass-bg-soft: rgba(250, 230, 238, 0.10);
+    --glass-border: rgba(150, 80, 110, 0.18);
+    --chip-bg: rgba(250, 222, 233, 0.96);
+    --chip-bg-hover: rgba(246, 206, 222, 0.98);
+    --chip-glass: rgba(252, 236, 242, 0.20);
+    --overlay-bg: rgba(245, 214, 226, 0.45);
+    --tag-type-text: #b8457a;
+    --tag-year-text: #4f8a40;
+}
+html[data-theme="sakura"] .page-bg .text-white { color: #3f2a35 !important; }
+html[data-theme="sakura"] .page-bg .text-gray-200 { color: #46303b !important; }
+html[data-theme="sakura"] .page-bg .text-gray-300 { color: #5a4450 !important; }
+html[data-theme="sakura"] .page-bg .text-gray-400 { color: #7f6573 !important; }
+html[data-theme="sakura"] .page-bg .text-gray-500 { color: #9a8290 !important; }
+
+/* —— 森林：晨雾米白 + 松针绿主色 + 秋叶橙点缀 —— */
+html[data-theme="forest"] {
+    --primary-color: #3f9a6b;
+    --primary-light: #6dbb90;
+    --primary-rgb: 63, 154, 107;
+    --secondary-color: #f8faf3;
+    --accent-color: #d98a3d;
+    --accent-rgb: 217, 138, 61;
+    --shadow-rgb: 40, 80, 55;
+    --text-color: #2f3a31;
+    --text-muted: #6b7a6d;
+    --border-color: rgba(60, 100, 70, 0.16);
+    --page-gradient-start: #fbfcf6;
+    --page-gradient-end: #dcebd9;
+    --card-gradient-start: #fdfefa;
+    --card-gradient-end: #eaf4e8;
+    --glass-bg: rgba(252, 254, 248, 0.10);
+    --glass-bg-strong: rgba(252, 254, 248, 0.16);
+    --glass-bg-soft: rgba(232, 244, 230, 0.08);
+    --glass-border: rgba(60, 100, 70, 0.18);
+    --chip-bg: rgba(222, 238, 220, 0.96);
+    --chip-bg-hover: rgba(204, 229, 202, 0.98);
+    --chip-glass: rgba(234, 246, 232, 0.18);
+    --overlay-bg: rgba(214, 232, 212, 0.45);
+    --tag-type-text: #2c7a52;
+    --tag-year-text: #a8621f;
+}
+html[data-theme="forest"] .page-bg .text-white { color: #26332a !important; }
+html[data-theme="forest"] .page-bg .text-gray-200 { color: #2c3a30 !important; }
+html[data-theme="forest"] .page-bg .text-gray-300 { color: #3d4d41 !important; }
+html[data-theme="forest"] .page-bg .text-gray-400 { color: #5d7262 !important; }
+html[data-theme="forest"] .page-bg .text-gray-500 { color: #7a8c7d !important; }
+
+/* 主题切换时颜色平滑过渡（尊重减少动效偏好）*/
+@media (prefers-reduced-motion: no-preference) {
+    html.lt-theme-anim body.page-bg,
+    html.lt-theme-anim body.page-bg * {
+        transition: background-color 0.35s ease, color 0.35s ease, border-color 0.35s ease !important;
+    }
+}
+
+/* ============================================================
+ * 主题选择器（顶部主题按钮弹出的色板菜单）
+ * ========================================================== */
+.lt-theme-menu {
+    position: fixed;
+    z-index: 60;
+    min-width: 13.5rem;
+    padding: 0.4rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
+    backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
+    box-shadow: var(--glass-shadow);
+    color: var(--text-color);
+}
+html[data-theme="seaside"] .lt-theme-menu,
+html[data-theme="sakura"] .lt-theme-menu,
+html[data-theme="forest"] .lt-theme-menu { background: rgba(255, 255, 255, 0.82); }
+.lt-theme-menu[hidden] { display: none; }
+.lt-theme-option {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: inherit;
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+}
+.lt-theme-option:hover,
+.lt-theme-option:focus-visible {
+    background: rgba(var(--primary-rgb), 0.12);
+    outline: none;
+}
+.lt-theme-option[aria-checked="true"] {
+    border-color: rgba(var(--primary-rgb), 0.55);
+    background: rgba(var(--primary-rgb), 0.10);
+    font-weight: 600;
+}
+.lt-theme-swatch {
+    flex: none;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+.lt-theme-check { margin-left: auto; opacity: 0; }
+.lt-theme-option[aria-checked="true"] .lt-theme-check { opacity: 1; }
+html[data-theme="contrast"] .lt-theme-menu { background: #000; border-color: #fff; }
+html[data-theme="contrast"] .lt-theme-option:focus-visible { outline: 3px solid #ffd60a; }

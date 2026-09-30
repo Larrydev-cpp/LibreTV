@@ -50,9 +50,73 @@
         // 放大到目标分辨率 + 对比度自适应锐化（钳制 min/max，无白边/光晕），老片真正变清晰。
         // 若某源噪点过重可手动切「老片降噪」，或调低「增强强度」。
         if (sh && sh <= 576) return 'sr_clear';
+        // 1080p 及以上实拍：直接原画。SVG 卷积滤镜在 Chrome/Firefox 上走 CPU 逐帧重绘，
+        // 1080p 下极易掉帧（表现为"播放慢/卡"），而在 ≤1080p 屏幕上锐化几乎看不出来。
+        if (sh >= 1000) return 'off';
+        // 性能守卫已降过级：本次会话不再回到滤镜档
+        if (perfDowngraded) return 'off';
         const s = getStrength();
         return s >= 1.25 ? 'strong' : (s >= 0.85 ? 'standard' : 'light');
     }
+    // ===== 性能守卫：画质增强导致掉帧时自动降级 =====
+    // 画质增强（WebGL 逐帧渲染 / SVG 滤镜）在弱 GPU、低端手机上会吃满算力，
+    // 表现为"视频播放慢、一卡一卡、声画不同步"。这里持续采样 getVideoPlaybackQuality()，
+    // 连续两个窗口掉帧率 >20%，且当前确实开着增强，就把增强关掉：
+    //   · 「自动」档：静默降级（本次会话内保持关闭），给一个提示；
+    //   · 手动选的档：尊重用户选择，不擅自改，只提示一次建议关闭。
+    let perfDowngraded = false;
+    let perfWarned = false;
+    let perfTimer = 0;
+    const PERF_INTERVAL_MS = 3000;
+    const PERF_DROP_RATIO = 0.2;
+    const PERF_MIN_FRAMES = 30;
+
+    function enhanceActive(art) {
+        const v = art && art.video;
+        if (!v) return false;
+        return !!(v.style.filter || (global.Anime4K && global.Anime4K.isRunning()));
+    }
+
+    function startPerfGuard(art) {
+        if (perfTimer) clearInterval(perfTimer);
+        const v = art && art.video;
+        if (!v || typeof v.getVideoPlaybackQuality !== 'function') return;
+        let last = null;
+        let strikes = 0;
+        perfTimer = setInterval(function () {
+            if (!art.video || art.video !== v) { clearInterval(perfTimer); perfTimer = 0; return; }
+            let q;
+            try { q = v.getVideoPlaybackQuality(); } catch (e) { return; }
+            const cur = { total: q.totalVideoFrames || 0, dropped: q.droppedVideoFrames || 0 };
+            const prev = last;
+            last = cur;
+            // 只在"正常播放中、页面可见"时判定；暂停/缓冲/后台标签页的掉帧不算数
+            if (!prev || v.paused || v.seeking || v.readyState < 3 || document.hidden) { strikes = 0; return; }
+            const dt = cur.total - prev.total;
+            const dd = cur.dropped - prev.dropped;
+            if (dt < 0 || dt < PERF_MIN_FRAMES) { strikes = 0; return; } // 计数被重置（换集）或帧太少
+            strikes = dd / dt > PERF_DROP_RATIO ? strikes + 1 : 0;
+            if (strikes < 2 || !enhanceActive(art)) return;
+            strikes = 0;
+            if (getSavedEnhance() === 'auto' && getSavedTarget() === 'auto') {
+                perfDowngraded = true;
+                if (global.Anime4K) global.Anime4K.disable();
+                v.style.filter = '';
+                v.dataset.enhance = 'off';
+                updateEnhanceTooltip(art, '自动 → 关闭(设备性能不足)');
+                updateQualityBadge(art);
+                if (typeof global.showToast === 'function') {
+                    global.showToast('检测到播放掉帧，已自动关闭画质增强以保证流畅', 'info');
+                }
+            } else if (!perfWarned) {
+                perfWarned = true;
+                if (typeof global.showToast === 'function') {
+                    global.showToast('播放掉帧严重：可在设置「画质增强」中选择「关闭」或「自动」提升流畅度', 'warning');
+                }
+            }
+        }, PERF_INTERVAL_MS);
+    }
+
     function updateEnhanceTooltip(art, text) {
         try { art.setting.update({ name: 'enhance', tooltip: text }); } catch (e) {}
     }
@@ -76,7 +140,7 @@
         if (!art || !art.video) return;
         // 'auto' 先按内容/分辨率解析为实际档
         const isAuto = value === 'auto';
-        const effective = isAuto ? resolveAuto(art) : value;
+        const effective = isAuto ? (perfDowngraded ? 'off' : resolveAuto(art)) : value;
         const preset = presetByValue(effective);
         if (preset.anime4k) {
             // 切到 Anime4K/降噪：清掉 CSS 滤镜，启用 WebGL 覆盖层
@@ -141,7 +205,8 @@
 
     // 初始化「画质增强」设置项（只需调用一次）
     function initEnhance(art) {
-        if (!art || enhanceInited) return;
+        // 按实例判定：Safari 换集会重建 ArtPlayer，新实例需要重新注册设置项与监听
+        if (!art || enhanceInitedFor === art) return;
         const saved = getSavedEnhance();
         if (global.Anime4K) global.Anime4K.setStrength(getStrength()); // 应用已保存的强度
         applyCurrent(art);
@@ -188,7 +253,7 @@
                 });
             } catch (e) { /* 开关不可用则忽略，不影响主功能 */ }
 
-            enhanceInited = true;
+            enhanceInitedFor = art;
         } catch (e) {
             console.warn('[PlayerEnhance] 增强设置项注册失败:', e && e.message);
         }
@@ -197,10 +262,17 @@
         art.on('video:loadedmetadata', () => applyCurrent(art));
         // 「自动」档实时重路由：真实分辨率确定/变化(resize)时，用当前分辨率重判增强档
         if (art.video) art.video.addEventListener('resize', () => applyCurrent(art));
-        // 播放器销毁时关闭 Anime4K 渲染循环
-        try { art.on('destroy', () => global.Anime4K && global.Anime4K.disable()); } catch (e) {}
+        // 掉帧监测：增强拖慢播放时自动降级
+        startPerfGuard(art);
+        // 播放器销毁时关闭 Anime4K 渲染循环与掉帧监测
+        try {
+            art.on('destroy', () => {
+                if (global.Anime4K) global.Anime4K.disable();
+                if (perfTimer) { clearInterval(perfTimer); perfTimer = 0; }
+            });
+        } catch (e) {}
     }
-    let enhanceInited = false;
+    let enhanceInitedFor = null;
 
     // ===== 增强强度滑块（对 Anime4K / 超分 生效）=====
     const LS_STRENGTH = 'enhanceStrength';
@@ -216,7 +288,7 @@
 
     let strengthPanel = null;
     function initStrengthControl(art) {
-        if (strengthPanel || !art || !art.video) return;
+        if ((strengthPanel && strengthPanel.isConnected) || !art || !art.video) return; // 旧实例已销毁则重建
         const parent =
             (art.template && (art.template.$player || art.template.$container)) ||
             art.video.parentElement;
@@ -286,7 +358,7 @@
 
     let badgeEl = null;
     function initQualityBadge(art) {
-        if (badgeEl || !art || !art.video) return;
+        if ((badgeEl && badgeEl.isConnected) || !art || !art.video) return; // 旧实例已销毁则重建
         const parent =
             (art.template && (art.template.$player || art.template.$container)) ||
             art.video.parentElement;

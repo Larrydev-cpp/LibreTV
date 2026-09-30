@@ -440,9 +440,12 @@
 
             videoEl = art.video;
             const parent = videoEl.parentElement;
-            if (parent && !canvas.parentElement) {
+            // 换集重建播放器（Safari 路径）时视频父节点会变：把画布挪到新容器里，
+            // 否则会渲染到已脱离文档的旧容器上——看不见却白白占用 GPU
+            if (parent && canvas.parentElement !== parent) {
                 if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
                 parent.appendChild(canvas);
+                if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
             }
             // 监听容器尺寸变化（全屏/旋屏）
             if (!resizeObs && global.ResizeObserver) {
