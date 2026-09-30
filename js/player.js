@@ -414,6 +414,15 @@ function showShortcutHint(text, direction) {
     }, 2000);
 }
 
+// 播放器进度条/高亮色跟随当前主题主色（css/glass-theme.css 的 --primary-color）
+function themeAccentColor() {
+    try {
+        const c = getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim();
+        if (c) return c;
+    } catch (e) {}
+    return '#1fb3c4';
+}
+
 // 初始化播放器
 function initPlayer(videoUrl) {
     if (!videoUrl) {
@@ -433,14 +442,26 @@ function initPlayer(videoUrl) {
         loader: adFilteringEnabled ? CustomHlsJsLoader : Hls.DefaultConfig.loader,
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 90,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        maxBufferSize: 30 * 1000 * 1000,
+        // 起播更快：解析完清单就预取首个分片，不等 MSE 挂载完成
+        startFragPrefetch: true,
+        // 已播放部分只留 30 秒：90 秒回看缓冲在手机上会顶满 SourceBuffer 配额，
+        // 触发 QuotaExceeded → 清理 → 卡顿；省下的内存留给前向缓冲
+        backBufferLength: 30,
+        // 前向缓冲 30s→60s（上限 120s）：采集站 CDN 速度波动大，多缓冲一些才扛得住抖动
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        maxBufferSize: 60 * 1000 * 1000,
         maxBufferHole: 0.5,
-        fragLoadingMaxRetry: 6,
-        fragLoadingMaxRetryTimeout: 64000,
-        fragLoadingRetryDelay: 1000,
+        // 分片加载策略：某个分片卡住时尽快放弃重试，而不是干等。
+        // hls.js 默认首字节超时 10s、整片 120s，重试退避上限 64s——源站抽风时画面会冻结一两分钟。
+        fragLoadPolicy: {
+            default: {
+                maxTimeToFirstByteMs: 8000,
+                maxLoadTimeMs: 60000,
+                timeoutRetry: { maxNumRetry: 4, retryDelayMs: 0, maxRetryDelayMs: 0 },
+                errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+            },
+        },
         manifestLoadingMaxRetry: 3,
         manifestLoadingRetryDelay: 1000,
         levelLoadingMaxRetry: 4,
@@ -485,7 +506,7 @@ function initPlayer(videoUrl) {
         autoPlayback: false,
         airplay: true,
         hotkey: false,
-        theme: '#1fb3c4',
+        theme: themeAccentColor(),
         lang: navigator.language.toLowerCase(),
         moreVideoAttr: {
             crossOrigin: 'anonymous',

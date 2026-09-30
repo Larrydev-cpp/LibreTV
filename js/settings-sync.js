@@ -70,7 +70,7 @@
             if (!res.ok || Object.keys(res.data).length === 0) { push(true); return false; }
             const remote = res.data;
             apply(remote);
-            try { if (remote.ltTheme) document.documentElement.setAttribute('data-theme', remote.ltTheme === 'contrast' ? 'contrast' : 'seaside'); } catch (e) {}
+            try { if (remote.ltTheme) document.documentElement.setAttribute('data-theme', (global.LT_THEMES || ['seaside', 'midnight', 'sakura', 'forest', 'contrast']).indexOf(remote.ltTheme) >= 0 ? remote.ltTheme : 'seaside'); } catch (e) {}
             if (typeof global.showToast === 'function') global.showToast(T('toast.settingsSynced'), 'info');
             return true;
         });
